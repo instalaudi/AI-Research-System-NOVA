@@ -1,0 +1,177 @@
+{
+    "entries": [
+        {
+            "title": "Article about Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Article about Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Future of AI",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Article about Future of AI",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:45:39",
+            "content": ""
+        },
+        {
+            "title": "Article about Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        },
+        {
+            "title": "Article about Future of AI",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        },
+        {
+            "title": "Another perspective on Future of AI",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        },
+        {
+            "title": "Article about Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "category": "General",
+            "score": 0.85,
+            "date": "2026-03-05 18:55:59",
+            "content": ""
+        }
+    ],
+    "nodes": [
+        {
+            "id": "Article about Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "group": 1
+        },
+        {
+            "id": "Article about Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "group": 1
+        },
+        {
+            "id": "Another perspective on Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "group": 1
+        },
+        {
+            "id": "Another perspective on Future of AI",
+            "group": 1
+        },
+        {
+            "id": "Article about Future of AI",
+            "group": 1
+        },
+        {
+            "id": "Another perspective on Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "group": 1
+        },
+        {
+            "id": "Article about Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "group": 1
+        },
+        {
+            "id": "Another perspective on Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "group": 1
+        },
+        {
+            "id": "Another perspective on Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "group": 1
+        },
+        {
+            "id": "Article about Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "group": 1
+        }
+    ],
+    "links": [
+        {
+            "source": "Article about Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "target": "Article about Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "value": 2
+        },
+        {
+            "source": "Another perspective on Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "target": "Article about Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "value": 2
+        },
+        {
+            "source": "Another perspective on Future of AI",
+            "target": "Another perspective on Latest trends in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "value": 2
+        },
+        {
+            "source": "Article about Future of AI",
+            "target": "Another perspective on Future of AI",
+            "value": 2
+        },
+        {
+            "source": "Another perspective on Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "target": "Article about Future of AI",
+            "value": 2
+        },
+        {
+            "source": "Article about Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "target": "Another perspective on Security challenges in Bioindicadores en la búsqueda de vida en lunas de Júpiter",
+            "value": 2
+        },
+        {
+            "source": "Another perspective on Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "target": "Article about Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "value": 2
+        },
+        {
+            "source": "Another perspective on Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "target": "Another perspective on Security challenges in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "value": 2
+        },
+        {
+            "source": "Article about Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "target": "Another perspective on Latest trends in Avances en la fotosíntesis artificial para la producción de combustible limpio",
+            "value": 2
+        }
+    ]
+}

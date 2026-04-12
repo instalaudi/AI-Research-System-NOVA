@@ -1,0 +1,47 @@
+/* tailwindcss-ignore */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+    /* Chrome, Safari and Opera */
+  }
+
+  .progress-bar-fill {
+    width: var(--progress-width, 0%);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .volume-bar {
+    height: 4px;
+    background-color: #ef4444; /* red-500 */
+    border-radius: 9999px;
+    transition: width 0.05s linear, opacity 0.2s ease;
+    width: var(--vol-width, 0px);
+    opacity: var(--vol-opacity, 1);
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.3);
+  color: white;
+}

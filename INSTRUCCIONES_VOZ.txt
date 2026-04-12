@@ -1,0 +1,84 @@
+════════════════════════════════════════════════════════════════
+ NOVA VOZ — Instrucciones de instalación y configuración
+════════════════════════════════════════════════════════════════
+
+PASO 1 — Instalar Piper TTS (una sola vez):
+────────────────────────────────────────────
+  cd backend
+  venv\Scripts\activate
+  pip install piper-tts --break-system-packages
+
+
+PASO 2 — Copiar los archivos nuevos:
+─────────────────────────────────────
+  tts_engine.py    →  backend/core/tts_engine.py
+  tts_additions.py →  leer instrucciones adentro, pegar en main.py
+  nova-voice.js    →  frontend/src/lib/nova-voice.js
+
+
+PASO 3 — La voz se descarga sola la primera vez:
+──────────────────────────────────────────────────
+  Cuando NOVA arranque por primera vez con el TTS,
+  descargará automáticamente la voz es_MX-claude-high
+  desde HuggingFace (~50MB).
+  Solo necesitas internet la primera vez.
+
+
+PASO 4 — Verificar que funciona:
+──────────────────────────────────
+  Con NOVA corriendo, prueba en tu terminal:
+
+  curl -X POST http://localhost:8000/tts \
+    -H "Authorization: Bearer TU_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"text": "Hola Juan Ramón, soy NOVA y ahora tengo voz propia."}' \
+    --output nova_test.wav
+
+  Luego abre nova_test.wav — deberías escuchar a NOVA hablar.
+
+
+PASO 5 — Voces disponibles (opcional):
+────────────────────────────────────────
+  Puedes cambiar la voz de NOVA desde la API:
+
+  POST /tts/voice
+  { "voice": "es_MX-claude-high" }   ← Recomendada (mexicano)
+  { "voice": "es_ES-davefx-medium" }  ← Española
+  { "voice": "es_MX-ald-medium" }     ← Mexicano alternativo
+
+  O con variable de entorno en .env:
+  NOVA_VOICE=es_MX-claude-high
+  NOVA_VOICE_SPEED=1.0
+
+
+ENDPOINTS NUEVOS:
+──────────────────
+  POST /tts              → Texto a voz (devuelve WAV)
+  POST /query/voice      → Pregunta + respuesta con audio
+  GET  /tts/status       → Estado del motor de voz
+  POST /tts/voice        → Cambiar voz de NOVA
+  DELETE /tts/cache      → Limpiar caché de audio
+
+
+CÓMO FUNCIONA LA VOZ BIDIRECCIONAL COMPLETA:
+──────────────────────────────────────────────
+
+  1. Tú hablas → micrófono → POST /stt → Whisper transcribe
+  2. El texto va a NOVA → POST /query/voice
+  3. NOVA procesa y responde con texto + audio WAV
+  4. El frontend muestra el texto y reproduce el audio
+  5. Escuchas la voz de NOVA responderte
+
+  ¡Sin dependencias externas! Todo corre en tu PC.
+
+
+NOTA SOBRE VELOCIDAD:
+──────────────────────
+  Primera síntesis: ~3-8 segundos (carga el modelo)
+  Síntesis subsecuentes: ~0.5-2 segundos (modelo en memoria)
+  Respuestas cacheadas: instantáneo
+
+  El caché guarda los audios generados para no repetir
+  síntesis de frases comunes. Se limpia con DELETE /tts/cache.
+
+════════════════════════════════════════════════════════════════
