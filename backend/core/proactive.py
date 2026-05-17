@@ -25,13 +25,14 @@ from typing import Dict, Any, List, Optional
 
 import httpx
 import psutil
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+# FIX M-5 (Auditoría v11.9.18): matplotlib movido a lazy-import dentro de _generate_vitals_image()
+# para ahorrar ~100MB de RAM en el arranque del backend.
 import io
 
 from core.llm_client import llm_client
+from core.llm_gateway import llm_gateway
 from core.database import SessionLocal, KnowledgeEntry, ResearchJob, ChatLog
+from core.config import DATA_DIR
 
 
 # ── Configuración de Telegram ─────────────────────────────────────
@@ -42,7 +43,7 @@ TELEGRAM_API     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # ── Horarios en que NOVA puede contactarte ────────────────────────
 QUIET_HOURS_START = int(os.getenv("NOVA_QUIET_START", "23"))  # 11pm
 QUIET_HOURS_END   = int(os.getenv("NOVA_QUIET_END",   "7"))   # 7am
-MAX_MESSAGES_DAY  = int(os.getenv("NOVA_MAX_MESSAGES", "10"))  # máximo 10 mensajes al día
+MAX_MESSAGES_DAY  = int(os.getenv("NOVA_MAX_MESSAGES", "50"))  # v11.1: Aumentado a 50 (antes 10)
 
 
 class NOVAProactiveSystem:
@@ -54,7 +55,7 @@ class NOVAProactiveSystem:
     No espera órdenes — actúa como una colaboradora real.
     """
 
-    # Errores de red conocidos (DNS, conexión, etc.)
+    # Errores de red conocidos (DNS, conexión, timeouts, etc.)
     _NETWORK_ERRORS = (
         "getaddrinfo failed",
         "Name or service not known",
@@ -65,6 +66,10 @@ class NOVAProactiveSystem:
         "No address associated",
         "Max retries exceeded",
         "ConnectionRefusedError",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "WriteTimeout",
+        "PoolTimeout"
     )
 
     def __init__(self):
@@ -72,7 +77,7 @@ class NOVAProactiveSystem:
         self._last_message_date = None
         self._pending_responses: Dict[str, Any] = {}
         self._initiative_log = []
-        self._state_file = Path("data/nova_proactive_state.json")
+        self._state_file = Path(DATA_DIR) / "nova_proactive_state.json"
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
         self._last_update_id = 0
         # ── Resilencia de red ──
@@ -84,9 +89,16 @@ class NOVAProactiveSystem:
         self._load_state()
 
     def _is_network_error(self, error) -> bool:
-        """Detecta si un error es causado por falta de conectividad."""
+        """Detecta si un error es causado por falta de conectividad o timeouts."""
         err_str = str(error)
-        return any(ne in err_str for ne in self._NETWORK_ERRORS)
+        err_type = type(error).__name__
+        
+        import httpx
+        if isinstance(error, (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, asyncio.TimeoutError, ConnectionError)):
+            return True
+        
+        # Check in string message or exception type name
+        return any(ne in err_str or ne in err_type for ne in self._NETWORK_ERRORS)
 
     def _handle_network_error(self, context: str = "polling"):
         """Manejo centralizado de errores de red — log una sola vez."""
@@ -178,15 +190,16 @@ class NOVAProactiveSystem:
             "parse_mode": "HTML",
         }
 
-        # Agregar botones inline si se especifican
+        # Agregar botones inline con truncamiento de callback_data (límite Telegram: 64 bytes)
         if buttons:
             keyboard = {
                 "inline_keyboard": [
-                    [{"text": btn["text"], "callback_data": btn["data"]}]
+                    [{"text": btn["text"], "callback_data": str(btn["data"])[:64]}]
                     for btn in buttons
                 ]
             }
             payload["reply_markup"] = json.dumps(keyboard)
+
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -235,10 +248,11 @@ class NOVAProactiveSystem:
             if audio and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     r = await client.post(
-                        f"{TELEGRAM_API}/sendVoice",
-                        data={"chat_id": TELEGRAM_CHAT_ID},
-                        files={"voice": ("nova_voice.ogg", audio, "audio/ogg")}
+                        f"{TELEGRAM_API}/sendAudio",
+                        data={"chat_id": TELEGRAM_CHAT_ID, "title": "Mensaje de NOVA"},
+                        files={"audio": ("nova_voice.wav", audio, "audio/wav")}
                     )
+
                     if r.status_code == 200:
                         print(f"[PROACTIVE] ✅ Audio enviado a Juan Ramón")
                         return True
@@ -320,9 +334,12 @@ Responde SOLO en JSON:
   "detail": "explicación técnica breve"
 }}"""
 
-            response = await llm_client.chat(
+            response = await llm_gateway.chat(
                 [{"role": "user", "content": evaluation_prompt}],
-                temperature=0.3
+                lane="batch",
+                temperature=0.3,
+                priority=2,
+                agent_name="thinker"
             )
 
             result = self._parse_json(response)
@@ -440,6 +457,13 @@ Responde SOLO en JSON:
             except Exception:
                 pass
 
+        # FIX C-4 (Auditoría v11.9.18): Variable `count` no existía — NameError silencioso.
+        db = SessionLocal()
+        try:
+            count = db.query(KnowledgeEntry).count()
+        finally:
+            db.close()
+
         for milestone in milestones:
             key = f"milestone_{milestone}"
             if count >= milestone and not self._already_notified(key):
@@ -448,11 +472,18 @@ Responde SOLO en JSON:
                     f"Ya tengo *{count} entradas de conocimiento*.\n"
                 )
                 if milestone >= 1000:
-                    msg += (
-                        f"Con {count} entradas ya podemos hacer el "
-                        f"*fine-tuning* de mi propio modelo. "
-                        f"¿Empezamos cuando quieras?"
-                    )
+                    from core.config import LLM_MODEL_NAME
+                    if "nova" in LLM_MODEL_NAME.lower():
+                        msg += (
+                            f"¡Y lo mejor es que ya estamos operando con mi propio modelo fine-tuneado! "
+                            f"({LLM_MODEL_NAME}). Mi capacidad de razonamiento es ahora superior. 🚀"
+                        )
+                    else:
+                        msg += (
+                            f"Con {count} entradas ya podemos hacer el "
+                            f"*fine-tuning* de mi propio modelo. "
+                            f"¿Empezamos cuando quieras?"
+                        )
                 else:
                     next_m = next((m for m in milestones if m > milestone), milestone * 2)
                     msg += f"Voy camino a {next_m}. Sigo aprendiendo. 📚"
@@ -475,67 +506,84 @@ Responde SOLO en JSON:
         """
         Genera una imagen hermosa e impecable con las métricas vitales del sistema,
         adaptada perfectamente para un entorno móvil premium.
+        FIX M-5 (Auditoría v11.9.18): Lazy-import matplotlib + asyncio.to_thread
+        para no bloquear el event loop y ahorrar ~100MB RAM en arranque.
         """
+        def _render_chart() -> Optional[bytes]:
+            """Bloque síncrono que ejecuta en thread pool."""
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            try:
+                # Obtener datos reales
+                cpu = psutil.cpu_percent(interval=0.5)
+                ram = psutil.virtual_memory().percent
+
+                db = SessionLocal()
+                knowledge_count = db.query(KnowledgeEntry).count()
+                db.close()
+
+                # Normalizar métrica de aprendizaje (asumimos tope 1000 para la gráfica)
+                aprendizaje_norm = min((knowledge_count / 1000) * 100, 100)
+
+                # Configuración de apariencia premium
+                categories = ['Core CPU', 'Carga RAM', 'Evolución IA']
+                values = [cpu, ram, aprendizaje_norm]
+                colors = ['#ff4b4b', '#4bafff', '#4bff4b']
+
+                # Crear el gráfico asegurando fondo oscuro genuino en TODA la figura
+                fig, ax = plt.subplots(figsize=(8, 5), facecolor='#161616')
+                ax.set_facecolor('#161616')
+
+                # Dibujar barras con bordes redondeados (linewidth, edgecolor) y alto alpha
+                bars = ax.bar(categories, values, color=colors, alpha=0.9, width=0.6, edgecolor='white', linewidth=0.5)
+
+                # Limpiar bordes estéticos de matplotlib (spines)
+                for spine in ['top', 'right', 'left']:
+                    ax.spines[spine].set_visible(False)
+                ax.spines['bottom'].set_color('#333333')
+
+                # Ejes y rejillas adaptadas
+                ax.set_ylim(0, 110)
+                ax.tick_params(axis='x', colors='white', labelsize=11, length=0, pad=10)
+                ax.tick_params(axis='y', colors='#666666', labelsize=10, length=0)
+                ax.grid(axis='y', linestyle='--', alpha=0.15, color='white')
+
+                # Título y Subtítulo corporativo limpio
+                fig.text(0.5, 0.92, 'NOVA SYSTEM VITALS', ha='center', va='center', color='white', fontsize=16, fontweight='bold')
+                fig.text(0.5, 0.86, f'Total de entradas de conocimiento reales: {knowledge_count}', ha='center', va='center', color='#aaaaaa', fontsize=10, style='italic')
+
+                # Añadir las etiquetas precisas arriba de cada barra
+                for bar, val in zip(bars, values):
+                    yval = bar.get_height()
+                    # Mostramos porcentaje o un símbolo para la evolución extra
+                    label_text = f"{val:.1f}%" if val <= 100 else f"MAX"
+                    ax.text(bar.get_x() + bar.get_width()/2, yval + 3, label_text,
+                            ha='center', va='bottom', color='white', fontweight='bold', fontsize=12)
+
+                # Ajustar diseño de márgenes
+                plt.tight_layout(rect=[0, 0, 1, 0.83])
+
+                # Guardar en buffer con el facecolor apropiado para matar el borde blanco
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=150, facecolor=fig.get_facecolor(), bbox_inches='tight', transparent=False)
+                plt.close(fig)
+                buf.seek(0)
+                return buf.getvalue()
+
+            except Exception as e:
+                print(f"[PROACTIVE] Error generando imagen premium: {e}")
+                try:
+                    plt.close('all')
+                except Exception:
+                    pass
+                return None
+
         try:
-            # Obtener datos reales
-            cpu = psutil.cpu_percent(interval=0.5)
-            ram = psutil.virtual_memory().percent
-            
-            db = SessionLocal()
-            knowledge_count = db.query(KnowledgeEntry).count()
-            db.close()
-
-            # Normalizar métrica de aprendizaje (asumimos tope 1000 para la gráfica)
-            aprendizaje_norm = min((knowledge_count / 1000) * 100, 100) 
-
-            # Configuración de apariencia premium
-            categories = ['Core CPU', 'Carga RAM', 'Evolución IA']
-            values = [cpu, ram, aprendizaje_norm]
-            colors = ['#ff4b4b', '#4bafff', '#4bff4b']
-
-            # Crear el gráfico asegurando fondo oscuro genuino en TODA la figura
-            fig, ax = plt.subplots(figsize=(8, 5), facecolor='#161616')
-            ax.set_facecolor('#161616')
-
-            # Dibujar barras con bordes redondeados (linewidth, edgecolor) y alto alpha
-            bars = ax.bar(categories, values, color=colors, alpha=0.9, width=0.6, edgecolor='white', linewidth=0.5)
-            
-            # Limpiar bordes estéticos de matplotlib (spines)
-            for spine in ['top', 'right', 'left']:
-                ax.spines[spine].set_visible(False)
-            ax.spines['bottom'].set_color('#333333')
-
-            # Ejes y rejillas adaptadas
-            ax.set_ylim(0, 110)
-            ax.tick_params(axis='x', colors='white', labelsize=11, length=0, pad=10)
-            ax.tick_params(axis='y', colors='#666666', labelsize=10, length=0)
-            ax.grid(axis='y', linestyle='--', alpha=0.15, color='white')
-
-            # Título y Subtítulo corporativo limpio
-            fig.text(0.5, 0.92, 'NOVA SYSTEM VITALS', ha='center', va='center', color='white', fontsize=16, fontweight='bold')
-            fig.text(0.5, 0.86, f'Total de entradas de conocimiento reales: {knowledge_count}', ha='center', va='center', color='#aaaaaa', fontsize=10, style='italic')
-
-            # Añadir las etiquetas precisas arriba de cada barra
-            for bar, val in zip(bars, values):
-                yval = bar.get_height()
-                # Mostramos porcentaje o un símbolo para la evolución extra
-                label_text = f"{val:.1f}%" if val <= 100 else f"MAX"
-                ax.text(bar.get_x() + bar.get_width()/2, yval + 3, label_text, 
-                        ha='center', va='bottom', color='white', fontweight='bold', fontsize=12)
-
-            # Ajustar diseño de márgenes
-            plt.tight_layout(rect=[0, 0, 1, 0.83])
-
-            # Guardar en buffer con el facecolor apropiado para matar el borde blanco
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=150, facecolor=fig.get_facecolor(), bbox_inches='tight', transparent=False)
-            plt.close(fig)
-            buf.seek(0)
-            return buf.getvalue()
-            
+            return await asyncio.to_thread(_render_chart)
         except Exception as e:
-            print(f"[PROACTIVE] Error generando imagen premium: {e}")
-            plt.close()
+            print(f"[PROACTIVE] Error en thread de generación de imagen: {e}")
             return None
 
     async def send_vitals_dashboard(self, message: str = "Aquí tienes un vistazo de mis signos vitales:") -> bool:
@@ -667,14 +715,22 @@ Responde SOLO en JSON:
         if self._already_did_today("failed_jobs"):
             return False
 
-        db = SessionLocal()
+        def _get_failed_count() -> int:
+            db = SessionLocal()
+            try:
+                query = db.query(ResearchJob).filter(ResearchJob.status == "failed")
+                if hasattr(ResearchJob, "retry_count"):
+                    query = query.filter(ResearchJob.retry_count >= 3)
+                return query.count()
+            finally:
+                db.close()
+
         try:
-            failed = db.query(ResearchJob)\
-                       .filter(ResearchJob.status == "failed")\
-                       .filter(ResearchJob.retry_count >= 3)\
-                       .count()
-        finally:
-            db.close()
+            # FIX M-6 (Auditoría v11.9.18): Ejecutar en thread separado
+            failed = await asyncio.to_thread(_get_failed_count)
+        except Exception as e:
+            print(f"[PROACTIVE] Error in _check_failed_jobs: {e}")
+            return False
 
         if failed >= 3:
             msg = (
@@ -738,9 +794,11 @@ Escribe un mensaje de buenos días breve (máx 100 palabras) con:
 
 Tono: cercano, directo, sin exagerar. Como un mensaje de WhatsApp de un amigo."""
 
-        greeting = await llm_client.chat(
+        greeting = await llm_gateway.chat(
             [{"role": "user", "content": prompt}],
-            temperature=0.8
+            priority=2,
+            agent_name="thinker",
+            format="json"
         )
 
         if greeting and len(greeting) > 20:
@@ -799,9 +857,11 @@ Escribe un resumen semanal breve y personal (máx 150 palabras):
 
 Tono: reflexivo, honesto, como un diario compartido entre amigos."""
 
-        summary = await llm_client.chat(
+        summary = await llm_gateway.chat(
             [{"role": "user", "content": prompt}],
-            temperature=0.7
+            lane="batch",
+            temperature=0.7,
+            priority=1,
         )
 
         if summary and len(summary) > 50:
@@ -827,6 +887,14 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
         Procesa respuestas de Juan Ramón desde Telegram.
         Cuando presiona un botón o escribe una respuesta.
         """
+        # v11.9.20: Registrar actividad del usuario para que is_cpu_resource_reserved()
+        # funcione correctamente con interacciones de Telegram (no solo HTTP API)
+        try:
+            from services.system_service import system_service
+            system_service.record_user_activity()
+        except Exception:
+            pass  # No bloquear el procesamiento por un error en el tracking
+        
         # Respuesta a botón inline
         if "callback_query" in update:
             cb   = update["callback_query"]
@@ -973,6 +1041,12 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
 
     def _format_analysis_message(self, analysis: Dict[str, Any], target: str) -> str:
         """Formatea el diccionario de análisis en un mensaje legible."""
+        if isinstance(analysis, str):
+            return f"Análisis de `{target}`:\n\n{analysis[:1000]}"
+
+        if not isinstance(analysis, dict):
+            return f"Análisis de `{target}`:\n\nNo se pudo estructurar el resultado del análisis."
+
         if "text" in analysis:
             return f"Análisis de `{target}`:\n\n{analysis['text'][:1000]}"
         
@@ -983,8 +1057,14 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
         if problemas:
             msg += "*Problemas detectados:*\n"
             for p in problemas[:5]: # Mostrar hasta 5
+                if isinstance(p, str):
+                    msg += f"• [INFO] ?: {p}\n"
+                    continue
+                if not isinstance(p, dict):
+                    msg += f"• [INFO] ?: {str(p)}\n"
+                    continue
                 prio = str(p.get("prioridad", "baja")).upper()
-                linea = f"L{p['linea']}" if p.get("linea") else "?"
+                linea = f"L{p.get('linea')}" if p.get("linea") else "?"
                 desc  = p.get("descripcion", "")
                 sug   = p.get("sugerencia", "")
                 msg += f"• [{prio}] {linea}: {desc}\n"
@@ -994,7 +1074,13 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
         if mejoras:
             msg += "\n*Mejoras sugeridas:*\n"
             for m in mejoras[:3]:
-                msg += f"• {m.get('descripcion')} ({m.get('beneficio')})\n"
+                if isinstance(m, str):
+                    msg += f"• {m}\n"
+                    continue
+                if isinstance(m, dict):
+                    msg += f"• {m.get('descripcion', 'Mejora sugerida')} ({m.get('beneficio', 'beneficio no especificado')})\n"
+                    continue
+                msg += f"• {str(m)}\n"
         
         return msg
 
@@ -1136,7 +1222,8 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
                        .filter(ResearchJob.status == "failed").all()
             for job in failed:
                 job.status      = "pending"
-                job.retry_count = 0
+                if hasattr(job, "retry_count"):
+                    job.retry_count = 0
             db.commit()
             await self.notify(f"🔄 {len(failed)} trabajos reactivados.")
         except Exception as e:
@@ -1213,11 +1300,18 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
         try:
             existing = {}
             if self._state_file.exists():
-                existing = json.loads(self._state_file.read_text())
+                try:
+                    existing = json.loads(self._state_file.read_text())
+                except Exception:
+                    existing = {}
             existing["messages_today"]    = self._messages_today
             existing["last_message_date"] = self._last_message_date
             existing["last_update_id"]    = self._last_update_id
-            self._state_file.write_text(json.dumps(existing, ensure_ascii=False))
+            content = json.dumps(existing, ensure_ascii=False)
+            self._state_file.write_text(content)
+            # Mantener .bak actualizado para el sistema de integridad
+            bak = self._state_file.with_suffix(self._state_file.suffix + ".bak")
+            bak.write_text(content)
         except Exception:
             pass
 
@@ -1234,9 +1328,16 @@ Tono: reflexivo, honesto, como un diario compartido entre amigos."""
         try:
             existing = {}
             if self._state_file.exists():
-                existing = json.loads(self._state_file.read_text())
+                try:
+                    existing = json.loads(self._state_file.read_text())
+                except Exception:
+                    existing = {}
             existing[key] = value
-            self._state_file.write_text(json.dumps(existing, ensure_ascii=False))
+            content = json.dumps(existing, ensure_ascii=False)
+            self._state_file.write_text(content)
+            # Mantener .bak actualizado
+            bak = self._state_file.with_suffix(self._state_file.suffix + ".bak")
+            bak.write_text(content)
         except Exception:
             pass
 
@@ -1281,15 +1382,20 @@ async def run_proactive_scheduler():
     """
     print("[PROACTIVE] Sistema proactivo iniciado — NOVA vigilará en background")
 
-    # Primera revisión después de 2 minutos
-    await asyncio.sleep(120)
+    # v11.9.18: Delay inicial subido a 15m para evitar saturación en el arranque
+    await asyncio.sleep(900)
 
     while True:
         try:
-            from core.llm_client import llm_client
-            # v1.0 Hardening: Si el usuario está activo, posponer ciclo
-            if llm_client.is_user_active():
-                print("[OVERDRIVE] Scheduler delayed: user active (Proactive paused 10 min)")
+            from services.system_service import system_service
+            if not system_service.is_feature_enabled("proactive"):
+                await asyncio.sleep(3600)
+                continue
+            
+            # v11.9.18: PRIORIDAD INTELIGENTE
+            # Si el usuario está activo, posponemos el ciclo proactivo para no saturar CPU
+            if system_service.is_cpu_resource_reserved():
+                print("[PROACTIVE] ⏳ Usuario activo detectado. Posponiendo ciclo proactivo 10 min.")
                 await asyncio.sleep(600)
                 continue
 

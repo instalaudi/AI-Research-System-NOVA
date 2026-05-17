@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any
 from agents.base_agent import BaseAgent # type: ignore
-from core.llm_client import llm_client # type: ignore
+from core.llm_gateway import llm_gateway # type: ignore
 from core.utils import parse_llm_json # type: ignore
 
 class CriticAgent(BaseAgent):
@@ -39,7 +39,7 @@ class CriticAgent(BaseAgent):
         
         messages = [{"role": "user", "content": prompt}]
         # Pass temperature to the chat call
-        response_text = await llm_client.chat(messages, format="json", temperature=payload_options["temperature"], priority=1)
+        response_text = await llm_gateway.chat(messages, lane="batch", format="json", temperature=payload_options["temperature"], priority=1, ignore_overdrive=True)
         
         try:
             data = parse_llm_json(response_text)

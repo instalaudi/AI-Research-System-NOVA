@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from typing import List
 import os
 from io import BytesIO
 from core.database import User, get_db
@@ -10,35 +11,55 @@ logger = get_logger("routers.memory")
 router = APIRouter(tags=["memory"])
 
 @router.post("/library/upload")
-async def upload_book(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
-    """Receives a book (PDF, EPUB, TXT) and processes it through the MemoryService."""
-    # v10.7.0: Lmite de tamao de archivo (50 MB)
+async def upload_books(files: List[UploadFile] = File(...), current_user: User = Depends(get_current_user)):
+    """
+    v11.4: Recibe múltiples libros (PDF, EPUB, TXT) y los procesa en cola.
+    """
     MAX_SIZE = 50 * 1024 * 1024
-    
-    # Intentar obtener el tamao sin leer todo a RAM si es posible
-    file_size = 0
-    if hasattr(file, "size") and file.size:
-        file_size = file.size
-    else:
-        # Fallback: leer y buscar
-        content = await file.read()
-        file_size = len(content)
-        await file.seek(0)
-    
-    if file_size > MAX_SIZE:
-        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande ({file_size / 1024 / 1024:.1f}MB). El lmite es 50MB.")
-
     allowed_exts = {".pdf", ".epub", ".txt"}
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in allowed_exts:
-        raise HTTPException(status_code=400, detail="Formato no soportado. Usa PDF, EPUB o TXT.")
-
-    logger.info(f"Uploading book: {file.filename} (Size: {file_size}) by user {current_user.id}")
-    success = await memory_service.ingest_document(file.file, file.filename, current_user.id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Error al procesar el libro.")
     
-    return {"status": "success", "message": f"Libro '{file.filename}' procesado e indexado correctamente."}
+    results = []
+    
+    for file in files:
+        # Validación de tamaño
+        file_size = 0
+        if hasattr(file, "size") and file.size:
+            file_size = file.size
+        else:
+            content = await file.read()
+            file_size = len(content)
+            await file.seek(0)
+        
+        if file_size > MAX_SIZE:
+            results.append({"file": file.filename, "status": "error", "message": "Archivo demasiado grande (Max 50MB)"})
+            continue
+
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in allowed_exts:
+            results.append({"file": file.filename, "status": "error", "message": "Formato no soportado"})
+            continue
+
+        logger.info(f"Queueing book: {file.filename} (Size: {file_size}) by user {current_user.id}")
+        
+        # Procesamos el libro (el Librarian se encarga de la cola secuencial internamente)
+        result = await memory_service.ingest_document(file.file, file.filename, current_user.id)
+        
+        if result is True:
+            results.append({"file": file.filename, "status": "success"})
+        elif isinstance(result, dict) and result.get("status") == "duplicate":
+            results.append({
+                "file": file.filename, 
+                "status": "duplicate", 
+                "message": f"Ya existe en la biblioteca como '{result.get('title')}'"
+            })
+        else:
+            results.append({"file": file.filename, "status": "error", "message": "Fallo en la absorción técnica"})
+    
+    return {
+        "status": "completed",
+        "processed": len(results),
+        "details": results
+    }
 
 @router.get("/knowledge", dependencies=[Depends(get_current_user)])
 async def get_knowledge(

@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from agents.base_agent import BaseAgent # type: ignore
 from core.knowledge_base import knowledge_base # type: ignore
-from core.llm_client import llm_client # type: ignore
+from core.llm_gateway import llm_gateway # type: ignore
 import json
 import re
 
@@ -18,13 +18,13 @@ class LibrarianAgent(BaseAgent):
         is_duplicate = False 
         
         try:
-            # FIX: Verificar top-3 resultados similares con umbral ampliado (0.25)
+            # FIX: Verificar top-3 resultados similares con umbral ampliado (0.15)
             # El umbral original de 0.1 solo capturaba duplicados casi exactos.
-            # Con 0.25 se detectan paráfrasis y reformulaciones del mismo contenido.
+            # Con 0.15 se detectan paráfrasis y reformulaciones del mismo contenido sin falsos positivos.
             text_to_check = f"{content.get('title')}\n{content.get('summary')}"
-            similar = vector_db.search_similar(text_to_check, limit=3)
+            similar = await vector_db.search_similar(text_to_check, limit=3)
             for candidate in similar:
-                if candidate["distance"] < 0.25:
+                if candidate["distance"] < 0.15:
                     print(f"[{self.name}] Semantic duplicate detected: "
                           f"{candidate['metadata'].get('title')} "
                           f"(dist: {candidate['distance']:.4f})")
@@ -56,7 +56,7 @@ class LibrarianAgent(BaseAgent):
                 Texto:
                 {text_to_kg}
                 """
-                kg_res = await llm_client.chat([{"role": "user", "content": kg_prompt}], priority=1)
+                kg_res = await llm_gateway.chat([{"role": "user", "content": kg_prompt}], lane="batch", priority=1, ignore_overdrive=True)
                 kg_res_clean = kg_res.replace("```json", "").replace("```", "").strip()
                 kg_match = re.search(r'\{.*\}', kg_res_clean, re.DOTALL)
                 if kg_match:

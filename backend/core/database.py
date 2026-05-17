@@ -45,11 +45,14 @@ class KnowledgeEntry(Base):
     source_count = Column(Integer, default=1)
     source_urls = Column(Text, default="[]") # FIX-6.5: JSON provenance
     consensus_label = Column(String, default="pending")
+    # v11.4.2: Huella digital de contenido para evitar duplicados
+    content_hash = Column(String, index=True, nullable=True)
     
     __table_args__ = (
         Index('ix_knowledge_concepts', 'concepts'),
         Index('ix_knowledge_category', 'category'),
         Index('ix_knowledge_user', 'user_id'),
+        Index('ix_knowledge_content_hash', 'content_hash'),
     )
 
 class KnowledgeNode(Base):
@@ -205,6 +208,39 @@ class SystemFailure(Base):
         Index('ix_system_failure_resolved', 'resolved'),
     )
 
+class SystemSetting(Base):
+    """Clave/valor persistente para flags de automatización (Panel de control)."""
+    __tablename__ = 'system_settings'
+    setting_key = Column(String(128), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class SnippetCache(Base):
+    """Cache local de snippets de código generados para reutilización rápida."""
+    __tablename__ = 'snippet_cache'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
+    snippet_type = Column(String, index=True)  # 'react_component', 'python_function', 'api_endpoint', etc.
+    language = Column(String, index=True)  # 'python', 'javascript', 'typescript'
+    framework = Column(String, nullable=True)  # 'react', 'vue', 'fastapi', etc.
+    code = Column(Text)  # Código fuente
+    description = Column(Text, nullable=True)  # Descripción corta del snippet
+    keywords = Column(Text)  # JSON list de palabras clave para búsqueda
+    vector_id = Column(String, nullable=True)  # ID en ChromaDB para búsqueda semántica
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    usage_count = Column(Integer, default=0)  # Número de veces reutilizado
+    last_used = Column(DateTime, nullable=True)
+    context = Column(Text, nullable=True)  # Contexto adicional (ej: "input validation")
+    similarity_hash = Column(String, nullable=True)  # Hash para detectar duplicados
+    
+    __table_args__ = (
+        Index('ix_snippet_type', 'snippet_type'),
+        Index('ix_snippet_language', 'language'),
+        Index('ix_snippet_user', 'user_id'),
+        Index('ix_snippet_created', 'created_at'),
+    )
+
 
 from sqlalchemy import event
 
@@ -215,7 +251,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA journal_mode=WAL")  # FIX-3.3: Enable Write-Ahead Logging for concurrency
-    cursor.execute("PRAGMA busy_timeout=10000")
+    cursor.execute("PRAGMA busy_timeout=60000")
     cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -12,7 +12,8 @@ class AgentLogger:
             "Analyzer": "idle",
             "Critic": "idle",
             "Verifier": "idle",
-            "Librarian": "idle"
+            "Librarian": "idle",
+            "Browser": "idle"
         }
         self.lock = asyncio.Lock() # BUG-02: Prevention
 

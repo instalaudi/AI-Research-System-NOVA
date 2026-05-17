@@ -1,13 +1,13 @@
-# 🤖 Neural Autonomous Versatile Agent (NOVA) v11.1.0
+# 🤖 Neural Autonomous Versatile Agent (NOVA) v12.0.0 "Agentic Skills & Persistence"
 
 ## Identity: Principal Software Engineer & Autonomous Researcher
 
-### Hardware Target: Local CPU/Ryzen Swarm Infrastructure (Self-Healing Enabled)
+### Hardware Target: Local CPU/Ryzen Swarm Infrastructure (Turbo Optimized)
 
-Bienvenido al sistema de investigación autónoma y desarrollo de código de nueva generación: **NOVA**. Esta plataforma utiliza un **Swarm de Agentes** especializados para navegar, investigar, auditar y construir software completo de forma interactiva. En su versión 11.1.0, NOVA ha evolucionado a un sistema **Auto-Healable** (Auto-Reparable) que no solo implementa mejoras reales en su código, sino que es capaz de diagnosticar sus propios fallos y auto-parchearse de forma autónoma siguiendo las 9 Reglas de Oro.
+Bienvenido a la versión **v12.0.0** de **NOVA**. Esta actualización mayor integra el motor de habilidades agenticas (**Agentic Skills Integration**). El sistema ahora incorpora **Chunking Semántico** de documentos, un **Sistema Autónomo de Lecciones Aprendidas** (Memoria Muscular para evitar repetir errores en builds) y **Protocolos Handoff** para asegurar cero pérdida de contexto entre el enjambre de agentes.
 
-![Dashboard Preview](https://imgshields.io/badge/Versi%C3%B3n-11.1.0-blue?style=for-the-badge&logo=ai)
-![Stack](https://imgshields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama-green?style=for-the-badge)
+![Dashboard Preview](https://imgshields.io/badge/Versi%C3%B3n-12.0.0-green?style=for-the-badge&logo=ai)
+![Stack](https://imgshields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama%20|%20ST-green?style=for-the-badge)
 
 El sistema ha evolucionado de un chat tradicional a un **Cerebro Digital** con capas cognitivas:
 
@@ -28,6 +28,8 @@ El sistema ha evolucionado de un chat tradicional a un **Cerebro Digital** con c
 
 - **Swarm Investigador**: Planner, Explorer, Analyzer, Critic y Librarian trabajando en paralelo con deduplicación vectorial.
 - **Swarm Desarrollador (Developer Loop)**: DeveloperAgent y AuditorAgent (QA) iteran sobre el código recién escrito hasta que compila perfecto.
+- **Gestor de Activos (v11.1.2)**: Pestañas de **Proyectos**, **Librería** (snippets), **Historial** (semántico) y **Git** (commits locales + diff).
+- **Versionado Git Automático**: Cada build exitoso guarda snapshot local y crea commit automático seguro por rutas explícitas.
 - **Auto-Reparación (Self-Healing)**: Motor de diagnóstico proactivo que detecta crashes, analiza tracebacks y aplica auto-parches de emergencia.
 - **Telegram Neural Link**: Integración total del bot conversacional móvil con el Cerebro Central, dotándolo de memoria a largo plazo (RAG), personalidad sólida e inmunidad horaria interactiva.
 - **NIAW (NOVA Immutable & Atomic Writes)**: Blindaje de datos contra cortes de energía. Sistema de escritura Write-Flush-Fsync-Replace que garantiza integridad atómica y backups automáticos (.bak).
@@ -93,5 +95,12 @@ npm run dev
 Esta edición elimina por completo fugas históricas de sockets HTTP, caídas del Pool de sesiones transaccionales y colapsos sincrónicos originarios de la arquitectura anterior, rindiendo un uptime estable sin degradación del LLM Context. Se integró _Provenance Tracking_ que indexa internamente URLs verificables a nivel Base de Datos (Source Truth).
 
 ---
+
+### Novedades v11.1.2
+
+- Snippet cache funcional con búsqueda y reutilización directa desde UI.
+- Historial semántico de código con endpoint `/api/history/search`.
+- Git history endpoint `/api/git/history` y diff endpoint `/api/git/diff/{commit_hash}`.
+- Drawer de diff con overlay clickeable y cierre por tecla Escape.
 
 _Desarrollado con ❤️ para la investigación predictiva escalable._

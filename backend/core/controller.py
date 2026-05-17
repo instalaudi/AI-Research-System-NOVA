@@ -1,9 +1,11 @@
 import os
 import asyncio
 from typing import Dict, Any, List, Optional
+from sqlalchemy.orm import Session
 from core.intent_classifier import classify_intent # type: ignore
 from core.logger import agent_logger # type: ignore
 from core.llm_client import llm_client # type: ignore
+from core.llm_gateway import llm_gateway # type: ignore
 from core.config import LLM_MODEL_NAME, COGNITIVE_MODE # type: ignore
 from core.file_manager import file_manager # type: ignore
 from core.context_manager import context_manager # type: ignore
@@ -65,7 +67,7 @@ class CognitiveController:
         Responde en JSON: {{"has_errors": bool, "corrections": "string o null", "confidence": float}}
         """
         try:
-            res = await llm_client.chat([{"role": "user", "content": prompt}], priority=1)
+            res = await llm_gateway.chat([{"role": "user", "content": prompt}], lane="batch", priority=1)
             import json, re
             json_match = re.search(r'\{.*\}', res, re.DOTALL)
             if json_match:
@@ -89,7 +91,7 @@ class CognitiveController:
                 "model": LLM_MODEL_NAME,
                 "architecture": "Cognitive Controller (Expert Edition)",
                 "agents_count": 6,
-                "active_agents": agents_info.get("agents", {}),
+                "active_agents": agents_info.get("states", {}),
                 "knowledge_base": {
                     "type": "ChromaDB + SQLite",
                     "documents_indexed": doc_count

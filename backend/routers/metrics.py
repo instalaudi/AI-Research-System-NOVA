@@ -6,9 +6,10 @@
 ╚══════════════════════════════════════════════════════════════╝
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.auth import get_current_admin
 from core.telemetry import nova_telemetry  # type: ignore
 
 router = APIRouter(prefix="/metrics", tags=["telemetry"])
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/metrics", tags=["telemetry"])
 #  JSON ENDPOINT
 # ════════════════════════════════════════════════════════════════
 
-@router.get("", summary="Métricas del sistema NOVA en tiempo real")
+@router.get("", summary="Métricas del sistema NOVA en tiempo real", dependencies=[Depends(get_current_admin)])
 async def get_metrics():
     """
     Devuelve un snapshot completo del estado de NOVA:
@@ -38,7 +39,8 @@ async def get_metrics():
 # ════════════════════════════════════════════════════════════════
 
 @router.get("/html", response_class=HTMLResponse,
-            summary="Dashboard de telemetría (vista navegador)")
+            summary="Dashboard de telemetría (vista navegador)",
+            dependencies=[Depends(get_current_admin)])
 async def get_metrics_html():
     """
     v10.13.0: Edición 'Ultra-Light' & Asíncrona. 
@@ -59,7 +61,7 @@ async def get_metrics_html():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NOVA — Command Center v10.13.0</title>
+    <title>NOVA — Command Center v12.0.0</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap');
         
@@ -195,7 +197,7 @@ async def get_metrics_html():
     </div>
 
     <div class="footer">
-        Generado: <span id="val-gen-at">{snapshot.get('generated_at')}</span> · Version: v10.13.0 · <a href="/api/metrics" style="color:var(--primary); text-decoration:none">JSON API ↗</a>
+        Generado: <span id="val-gen-at">{snapshot.get('generated_at')}</span> · Version: v12.0.0 · <a href="/api/metrics" style="color:var(--primary); text-decoration:none">JSON API ↗</a>
     </div>
 
     <script>

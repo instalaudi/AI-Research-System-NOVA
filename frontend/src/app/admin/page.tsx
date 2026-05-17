@@ -46,7 +46,14 @@ interface SystemStats {
 }
 
 // --- Componentes Reutilizables ---
-const StatCard = ({ title, value, icon: Icon, color }: any) => (
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  color: string;
+}
+
+const StatCard = ({ title, value, icon: Icon, color }: StatCardProps) => (
   <div className="bg-[#111] border border-gray-800/50 p-6 rounded-3xl shadow-xl hover:border-gray-700/50 transition-all">
     <div className={`flex items-center gap-3 mb-4 ${color}`}>
       <Icon size={20} />
@@ -65,7 +72,13 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [logs, setLogs] = useState<EvolutionLog[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
+  
+  interface HistoryPoint {
+    time: string;
+    cpu: number;
+    ram: number;
+  }
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -75,41 +88,60 @@ export default function AdminPage() {
   const [editForm, setEditForm] = useState({ username: "", email: "", password: "" });
 
   useEffect(() => {
+    let cancelled = false;
+    
+    const initialLoad = async () => {
+      setIsLoading(true);
+      await Promise.all([
+        fetchUsers(cancelled),
+        fetchLogs(cancelled),
+        refreshTelemetry(cancelled)
+      ]);
+      if (!cancelled) setIsLoading(false);
+    };
+
     if (!authLoading) {
       if (!user || !user.is_admin) {
         router.push("/");
         return;
       }
       initialLoad();
-      const interval = setInterval(refreshTelemetry, 5000);
-      return () => clearInterval(interval);
+      const interval = setInterval(() => {
+        refreshTelemetry(cancelled);
+      }, 10000); // 10 seconds interval
+      
+      return () => {
+        cancelled = true;
+        clearInterval(interval);
+      };
     }
   }, [authLoading, user, router]);
 
-  const initialLoad = async () => {
-    setIsLoading(true);
-    await Promise.all([fetchUsers(), fetchLogs(), refreshTelemetry()]);
-    setIsLoading(false);
-  };
-
-  const fetchUsers = async () => {
+  const fetchUsers = async (cancelled?: boolean) => {
     try {
       const res = await apiFetch("/admin/users");
+      if (cancelled) return;
       if (res.ok) setUsers(await res.json());
       else if (res.status === 403) setError("Acceso denegado: Se requiere Nivel Admin.");
-    } catch (e) { setError("Error de conexión con el núcleo."); }
+    } catch (e) {
+      if (!cancelled) setError("Error de conexión con el núcleo.");
+    }
   };
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (cancelled?: boolean) => {
     try {
       const res = await apiFetch("/nova/logs");
+      if (cancelled) return;
       if (res.ok) setLogs(await res.json());
-    } catch (e) { console.error("Logs error", e); }
+    } catch (e) {
+      if (!cancelled) console.error("Logs error", e);
+    }
   };
 
-  const refreshTelemetry = async () => {
+  const refreshTelemetry = async (cancelled?: boolean) => {
     try {
       const res = await apiFetch("/metrics");
+      if (cancelled) return;
       if (res.ok) {
         const raw = await res.json();
         const data: SystemStats = {
@@ -129,7 +161,9 @@ export default function AdminPage() {
           return [...prev.slice(-19), newPoint];
         });
       }
-    } catch (e) { console.error("Telemetry error", e); }
+    } catch (e) {
+      if (!cancelled) console.error("Telemetry error", e);
+    }
   };
 
   // --- Acciones de Usuario ---
@@ -148,7 +182,15 @@ export default function AdminPage() {
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isEditing) return;
-    const res = await apiFetch(`/admin/users/${isEditing.id}`, { method: "PUT", json: editForm });
+    
+    // Evitar enviar password si está vacío para evitar sobrescribir con contraseña en blanco
+    const payload = {
+      username: editForm.username,
+      email: editForm.email,
+      ...(editForm.password ? { password: editForm.password } : {})
+    };
+    
+    const res = await apiFetch(`/admin/users/${isEditing.id}`, { method: "PUT", json: payload });
     if (res.ok) { setIsEditing(null); fetchUsers(); }
   };
 

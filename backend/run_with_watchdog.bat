@@ -2,6 +2,8 @@
 title NOVA BACKEND - ACTIVO
 :LOOP
 echo.
+echo [!] Realizando limpieza preventiva de recursos...
+ollama stop qwen3:8b >nul 2>&1
 echo [+] Iniciando Motores de NOVA...
 echo.
 call venv\Scripts\activate.bat

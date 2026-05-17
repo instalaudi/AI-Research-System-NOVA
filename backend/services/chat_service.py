@@ -3,15 +3,18 @@ import re
 import asyncio
 import time
 import datetime
+import hashlib
 from typing import AsyncGenerator, List, Optional, Any
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from core.llm_client import llm_client
+from core.llm_gateway import llm_gateway
 from core.intent_classifier import classify_intent
 from core.config import COGNITIVE_MODE, LLM_FAST_MODEL
 from core.controller import cognitive_controller
 from core.sandbox import sandbox
+from core.tts_engine import nova_voice
 from core.prompts import (
-    KNOWLEDGE_QUERY_PROMPT,
+    KNOWLEDGE_QUERY_PROMPT_BODY,     # v12.1.6: Sin identidad redundante
     ACTION_AGENT_PROMPT,
     SYSTEM_AUDIT_PROMPT,
     RAG_STREAM_PROMPT,
@@ -19,14 +22,27 @@ from core.prompts import (
     VISION_ANALYSIS_PROMPT,
     VISION_ANALYSIS_PROMPT_BODY,     # FIX: sin identidad duplicada para stream
     NOVA_IDENTITY_PROMPT,
+    NOVA_SOCIAL_PROMPT,
+    NOVA_LEARNING_SUMMARY_PROMPT,    # v12.1.6: Prompt especializado
 )
 from core.logging_config import get_logger, request_id_var
 from services.memory_service import memory_service
 from services.system_service import system_service
+from core.task_queue import task_queue
 from core.cache import smart_cache
 from core.guard import prompt_guard
 from core.intent_classifier import classify_intent
-from core.database import SessionLocal, UserProfile, Feedback
+from core.database import SessionLocal, UserProfile, Feedback, ChatLog
+from core.project_manager import project_manager
+from core.config import ENABLE_AUTO_GIT_VERSIONING
+from core.git_versioning import git_versioning
+from core.skill_manager import skill_manager
+from core.tool_executor import tool_executor
+
+# v11.9.22: Estado global para aprobación de herramientas (Human-in-the-Loop)
+# En una app multi-usuario esto debería ir a Redis/DB, pero para uso local en PC basta un dict.
+pending_tools = {} # user_id -> {"tool": "terminal", "command": "...", "original_query": "..."}
+
 
 logger = get_logger("services.chat")
 
@@ -34,39 +50,81 @@ class ChatService:
     def __init__(self):
         pass
 
-    async def handle_standard_query(self, query: str, images: Optional[List[str]], files_context: str, user_id: int, db: Any) -> dict:
+    async def handle_standard_query(self, query: str, images: Optional[List[str]], files_context: str, user_id: int, db: Any, mode: str = "auto", background_tasks: Optional[BackgroundTasks] = None) -> dict:
         """
         Orchestrates a standard (non-streaming) query with Cache, Guard and Personalization.
         """
+        system_service.record_user_activity()
         start_time = time.time()
         
+        # v11.9.7: Background Memory Extraction (Goldfish Fix)
+        # Removido (v13.9.5): Se causaba doble extracción porque ya se extrae al final de la función
+        if background_tasks:
+            request_id = request_id_var.get()
+
+        # v11.9.23: Human-in-the-Loop para Standard Query (Aprobación de herramientas)
+        if user_id in pending_tools:
+            approval_query = query.lower().strip()
+            if any(x in approval_query for x in ["si", "yes", "aceptar", "dale", "autorizo", "procede"]):
+                # Para consultas standard (no stream), usamos un generador interno y capturamos el resultado final
+                answer = ""
+                async for chunk in self._execute_pending_tool(user_id, db):
+                    try:
+                        data_chunk = json.loads(chunk.replace("data: ", ""))
+                        if data_chunk.get("type") == "chunk":
+                            answer += data_chunk.get("text", "")
+                    except: continue
+                return {"query": query, "answer": answer.strip(), "mode": "tool_execution", "needs_research": False}
+            elif any(x in approval_query for x in ["no", "cancelar", "detente", "abortar"]):
+                del pending_tools[user_id]
+                return {"query": query, "answer": "Entendido. He cancelado la ejecución de la herramienta.", "mode": "chat"}
+
         # 1. Security Check (Prompt Guard)
         is_safe, reason = prompt_guard.is_safe(query)
         if not is_safe:
             await system_service.track_metric("errors_total")
             return {"query": query, "answer": f"🛡️ {reason}", "mode": "security_blocked"}
 
-        # 1.5 Intent Routing (Vital for Voice Mode)
-        intent = await classify_intent(query)
+        # 1.5 Intent Routing (Vital para Voice Mode)
+        if mode == "auto":
+            intent = await classify_intent(query)
+        else:
+            intent = mode.upper()
+            if intent == "BUILD": intent = "PROJECT_BUILD"
+
+        if intent == "CONVERSATION" and images:
+            intent = "KNOWLEDGE"
         if intent == "SYSTEM":
              audit_data = await system_service.get_full_system_audit(db)
              audit_json = json.dumps(audit_data, indent=2, ensure_ascii=False)
              system_instruction = SYSTEM_AUDIT_PROMPT.replace("{audit_json}", "Ver Datos de Usuario")
              user_data = f"DATOS DE AUDITORÍA RECIENTES:\n{audit_json}"
              
-             llm_answer = await llm_client.chat([
+             llm_answer = await llm_gateway.chat([
                  {"role": "system", "content": system_instruction},
                  {"role": "user", "content": user_data}
-             ], temperature=0.0, priority=0)
+             ], lane="realtime", temperature=0.0, priority=0)
              
              answer = llm_answer.strip() if llm_answer else "Lo siento, hubo un error al obtener la auditoría del sistema."
              return {"query": query, "answer": answer, "mode": "system_audit", "needs_research": False}
 
+        # 1.6 Tool Use Prevention (v13.6.4: Protejer contra mal uso en saludos)
+        is_social_only = len(query.split()) <= 6 and any(x in query.lower() for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
+        is_general_query = is_social_only or (intent == "CONVERSATION")
+
         if intent == "PROJECT_BUILD":
             try:
-                from core.task_queue import task_queue
-                from core.database import ChatLog, ResearchJob
-                
+                # v11.9.18: Removed brevity check. We now trust the smarter IntentClassifier 
+                # to distinguish between social chat and direct action commands.
+                # v11.9.24: Check for active builds to prevent resource exhaustion
+                if system_service.has_active_builds(window_minutes=15):
+                    busy_msg = (
+                        "⚠️ Ya tengo una tarea de construcción o auditoría pesada en progreso.\n\n"
+                        "Para no saturar el sistema y mantener mi velocidad de respuesta, por favor espera a que termine "
+                        "la tarea actual antes de iniciar una nueva. ¡Gracias por tu paciencia!"
+                    )
+                    return {"query": query, "answer": busy_msg, "mode": "system_busy", "needs_research": False}
+
                 # Acknowledge immediately in DB
                 ack_msg = (
                     "¡Entendido! He aceptado el desafío. 🏗️\n\n"
@@ -78,8 +136,10 @@ class ChatService:
                 db.add(ChatLog(user_id=user_id, role="assistant", content=ack_msg))
                 db.commit()
 
+                # Register build activity to block others
+                system_service.record_build_activity()
+
                 # Enqueue the background task
-                # Priority 2: High priority for user requests
                 await task_queue.add_task(
                     task_type="project_build", 
                     data={"query": query}, 
@@ -94,53 +154,164 @@ class ChatService:
                 db.commit()
                 return {"query": query, "answer": err_msg, "mode": "project_build", "needs_research": False}
 
+
         # 2. Personalization (User Profile Injection)
         user_profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
         profile_context = ""
         if user_profile:
             profile_context = f"\n[PERFIL DEL USUARIO]: Preferences: {user_profile.preferences}, Topics: {user_profile.frequent_topics}\n"
+        
+        # v13.0: Inyección de Memoria Persistente JSON
+        json_memory_context = memory_service.get_formatted_json_memory()
+        profile_context += f"\n{json_memory_context}\n"
 
-        # 3. Cache Check
-        cache_params = {"images": len(images) if images else 0, "personalization": bool(profile_context)}
-        cached_res = smart_cache.get(query, llm_client.fast_model, cache_params, str(user_id))
+        # 3. Cache Check (Bypass for attachments)
+        has_attachments = bool(images) or bool(files_context)
+        
+        # v12.1.6: Patrones que NUNCA deben usar cache para evitar "ecos" de alucinaciones
+        no_cache_keywords = ["qué has aprendido", "que sabes", "resumen de lo aprendido", "conocimiento acumulado"]
+        skip_cache = any(kw in query.lower() for kw in no_cache_keywords)
+
+        if has_attachments or skip_cache:
+            cached_res = None
+            cache_params = {}
+        else:
+            cache_params = {"images": 0, "personalization": bool(profile_context)}
+            cached_res = smart_cache.get(query, llm_client.fast_model, cache_params, str(user_id))
+            
         if cached_res:
             await system_service.track_metric("cache_hits")
             await system_service.track_metric("requests_total")
             return {"query": query, "answer": cached_res, "mode": "knowledge_search", "cached": True}
         
-        await system_service.track_metric("cache_misses")
+        if not has_attachments:
+            await system_service.track_metric("cache_misses")
 
-        # 4. Context Building
-        context = await memory_service.build_rag_context("KNOWLEDGE", query, files_context, db)
-        image_context = ""
-        if images:
-            image_context = f"\n\nIMÁGENES ADJUNTAS: {images}"
+        # v11.8.0: FAST LANE en Standard Query
+        system_id = NOVA_SOCIAL_PROMPT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
+        
+        # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
+        _LEARNING_SUMMARY_PATTERNS = [
+            r"qu[ée]\s+has\s+aprendido",
+            r"resume\s+lo\s+(que|aprendido|acumulado)",
+            r"cu[ée]ntame\s+(que|lo que)\s+has\s+aprendido",
+            r"qu[ée]\s+conocimiento\s+tienes",
+        ]
+        
+        is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
+        if is_learning_summary:
+            system_id = NOVA_LEARNING_SUMMARY_PROMPT
+
+        # Omitir RAG pesado si es chat social
+        context = ""
+        if intent != "CONVERSATION":
+            context = await memory_service.build_rag_context("KNOWLEDGE", query, files_context, db)
             
         current_time = datetime.datetime.now().strftime("%A %d de %B de %Y, %I:%M %p")
-        # Localize manually if needed, but for now we'll use a helper or simple mapping if server is English
+        # Localize manually 
         days = {"Monday": "lunes", "Tuesday": "martes", "Wednesday": "miércoles", "Thursday": "jueves", "Friday": "viernes", "Saturday": "sábado", "Sunday": "domingo"}
         months = {"January": "enero", "February": "febrero", "March": "marzo", "April": "abril", "May": "mayo", "June": "junio", "July": "julio", "August": "agosto", "September": "septiembre", "October": "octubre", "November": "noviembre", "December": "diciembre"}
         for en, es in days.items(): current_time = current_time.replace(en, es)
         for en, es in months.items(): current_time = current_time.replace(en, es)
-
-        prompt = KNOWLEDGE_QUERY_PROMPT.format(
-            query=query, 
-            context=context + profile_context, 
-            image_context=image_context,
-            files_context=files_context,
-            current_time=current_time
-        )
+ 
+        # v11.9.22: Skill Injection (Universal para que NOVA no alucine sobre su entorno)
+        active_skills = ["terminal_skill", "browser_navigation_skill"]
+        skills_context = skill_manager.get_active_skills_context(active_skills)
+ 
+        # Construcción de mensajes final
+        if intent == "CONVERSATION":
+            # v13.8.16: Incluir contexto de archivos incluso en charla social para evitar que NOVA ignore adjuntos
+            user_content = query
+            if files_context:
+                user_content = f"{files_context}\n\nMENSAJE DEL USUARIO: {query}"
+            
+            messages = [
+                {"role": "system", "content": system_id + skills_context},
+                {"role": "user", "content": user_content}
+            ]
+        else:
+            prompt = KNOWLEDGE_QUERY_PROMPT_BODY.format(
+                query=query, 
+                context=context + profile_context + skills_context, 
+                image_context="", 
+                files_context=files_context,
+                current_time=current_time
+            )
+            messages = [{"role": "system", "content": system_id}, {"role": "user", "content": prompt}]
         
         # 5. LLM Execution
         try:
-            llm_answer = await llm_client.chat([{"role": "user", "content": prompt}], priority=0)
+            # v11.9.7: Pasamos images=images nativamente para que Llava funcione
+            llm_answer = await llm_gateway.chat(messages, lane="realtime", priority=0, images=images)
+            
+            # v11.9.23: Detect Tool Call in Standard Chat
+            if llm_answer:
+                # Extraer bloque JSON asumiendo que el LLM puede incluir explicaciones antes
+                import json
+                
+                # Buscar cualquier cosa que parezca un JSON de tool
+                if '"tool"' in llm_answer:
+                    json_match = re.search(r'\{[\s\S]*?"tool"\s*:\s*"([^"]+)"[\s\S]*?\}', llm_answer)
+                    if json_match:
+                        try:
+                            # Limpiar posibles comillas de markdown
+                            raw_json = json_match.group()
+                            tool_data = json.loads(raw_json, strict=False)
+                            tool_name = tool_data.get("tool")
+                            text_before = llm_answer[:json_match.start()].replace('```json', '').replace('```', '').strip()
+                            
+                            # 1. Detect Terminal
+                            if tool_name == "terminal" and "command" in tool_data:
+                                command = tool_data["command"]
+                                pending_tools[user_id] = {
+                                    "tool": "terminal",
+                                    "command": command,
+                                    "original_query": query
+                                }
+                                msg = f"{text_before}\n\n" if text_before else ""
+                                msg += (
+                                    f"> [!CAUTION]\n"
+                                    f"> **NOVA solicita ejecutar un comando de terminal:**\n"
+                                    f"> ```bash\n{command}\n```\n"
+                                    f"> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
+                                )
+                                return {"query": query, "answer": msg, "mode": "tool_approval", "needs_research": False}
+                            
+                            # 2. Detect Browser
+                            elif tool_name == "browser" and "objective" in tool_data:
+                                objective = tool_data["objective"]
+                                pending_tools[user_id] = {
+                                    "tool": "browser",
+                                    "objective": objective,
+                                    "original_query": query
+                                }
+                                msg = f"{text_before}\n\n" if text_before else ""
+                                msg += (
+                                    f"> [!IMPORTANT]\n"
+                                    f"> **NOVA solicita usar el Navegador Autónomo:**\n"
+                                    f"> **Objetivo:** {objective}\n"
+                                    f"> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
+                                )
+                                return {"query": query, "answer": msg, "mode": "tool_approval", "needs_research": False}
+                        except Exception as e:
+                            pass # Fallback a texto plano si falla el parseo
+
+            # v11.9.8: Explicit Memory Confirmation
+            memory_confirmed = ""
+            # Buscamos patrones de memoria en la query original para asegurar confirmación incluso en CONVERSATION
+            from core.intent_classifier import _MEMORY_TRIGGERS
+            if any(re.search(pat, query, re.I) for pat in _MEMORY_TRIGGERS) or intent == "KNOWLEDGE":
+                conf = await memory_service.extract_and_store_memory(query, user_id)
+                if conf:
+                    memory_confirmed = f"\n\n> [!TIP]\n> **{conf}**"
+
             if not llm_answer or "INSUFFICIENT_KNOWLEDGE" in llm_answer.upper():
                 return await self._format_research_fallback(query, llm_answer)
             
-            answer = llm_answer.strip()
+            answer = llm_answer.strip() + memory_confirmed
             
-            # Update Cache (Solo si NO es un timeout alert)
-            if "tardó demasiado" not in answer:
+            # Update Cache (Solo si NO es un timeout alert y no hay adjuntos)
+            if "tardó demasiado" not in answer and not has_attachments:
                 smart_cache.set(query, llm_client.fast_model, cache_params, str(user_id), answer)
             
             latency = (time.time() - start_time) * 1000
@@ -171,12 +342,28 @@ class ChatService:
             "needs_research": True
         }
 
-    async def stream_orchestrator(self, query: str, images: Optional[List[str]], files_context: str, user_id: int, db: Any) -> AsyncGenerator[str, None]:
+    async def stream_orchestrator(self, query: str, images: Optional[List[str]], files_context: str, user_id: int, db: Any, mode: str = "auto", background_tasks: Optional[BackgroundTasks] = None) -> AsyncGenerator[str, None]:
         """
         Main orchestrator for streaming responses with tool-use, intents, Cache and Guard.
         """
+        system_service.record_user_activity()
         start_time = time.time()
         request_id = request_id_var.get()
+
+        # v11.9.7: Background Memory Extraction (Goldfish Fix)
+        # Removido (v13.9.5): Se extrae explícitamente al final del stream
+
+        # v11.9.22: Human-in-the-Loop - Verificar si el usuario respondió a una aprobación pendiente
+        if user_id in pending_tools:
+            approval_query = query.lower().strip()
+            if any(x in approval_query for x in ["si", "yes", "aceptar", "dale", "autorizo", "procede"]):
+                async for chunk in self._execute_pending_tool(user_id, db): yield chunk
+                return
+            elif any(x in approval_query for x in ["no", "cancelar", "detente", "abortar"]):
+                del pending_tools[user_id]
+                yield f"data: {json.dumps({'type': 'chunk', 'text': '❌ Acción cancelada por el usuario. ¿En qué más puedo ayudarte?'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
 
         # 1. Security Check
         is_safe, reason = prompt_guard.is_safe(query)
@@ -184,10 +371,18 @@ class ChatService:
             yield f"data: {json.dumps({'type': 'metadata', 'intent': 'SECURITY', 'request_id': request_id})}\n\n"
             yield f"data: {json.dumps({'type': 'chunk', 'text': f'🛡️ {reason}'})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            system_service.track_metric("errors_total")
+            await system_service.track_metric("errors_total")
             return
 
-        intent = await classify_intent(query)
+        # 1.5 Intent Classification
+        if mode == "auto":
+            intent = await classify_intent(query)
+        else:
+            intent = mode.upper()
+            if intent == "BUILD": intent = "PROJECT_BUILD"
+            
+        if intent == "CONVERSATION" and images:
+            intent = "KNOWLEDGE"
         yield f"data: {json.dumps({'type': 'metadata', 'intent': intent, 'request_id': request_id})}\n\n"
 
         if intent == "SYSTEM":
@@ -195,34 +390,51 @@ class ChatService:
              return
 
         if intent == "PROJECT_BUILD":
-             yield f"data: {json.dumps({'type': 'chunk', 'text': '🛠️ Construyendo arquitectura y ejecutando pruebas de QA...'})}\\n\\n"
+             yield f"data: {json.dumps({'type': 'chunk', 'text': '🛠️ Construyendo arquitectura y ejecutando pruebas de QA...'})}\n\n"
+
              try:
                  from agents.developer_agent import developer_agent
-                 from core.project_manager import project_manager
-                 
                  # Build with standard query context
-                 files_dict = await developer_agent.build_project(query)
+                 files_dict = await developer_agent.build_project(query, user_id=user_id, db_session=db)
+                 snapshot_path = project_manager.save_project_snapshot(
+                     files_dict,
+                     project_name=f"snapshot_user_{user_id}"
+                 )
                  zip_path = project_manager.package_project(files_dict, "nova_project_" + str(user_id))
                  filename = zip_path.replace("\\\\", "/").split("/")[-1]
                  
+                 # Extract project name for display
+                 project_display_name = filename.replace('.zip', '').replace(f'nova_project_{user_id}_', '')
+                 
                  build_msg = (
-                     "\\n\\n¡El código ha pasado la fase de Auditoría y QA!\\n\\n"
-                     "He empaquetado tu proyecto en formato ZIP. Descárgalo desde este enlace directo o simplemente haz click en él:\\n\\n"
-                     f"👉 **[Descargar Proyecto 100% Funcional](/api/chat/download/{filename})**"
+                     "\n\n¡El código ha pasado la fase de Auditoría y QA!\n\n"
+                     f"✅ Proyecto '{project_display_name}' creado exitosamente.\n\n"
+                     "👉 **Ve a la pestaña 'Proyectos' para descargarlo.**\n\n"
+                     f"📁 Archivo: {filename}"
                  )
-                 yield f"data: {json.dumps({'type': 'chunk', 'text': build_msg})}\\n\\n"
+
+                 if ENABLE_AUTO_GIT_VERSIONING:
+                     git_result = git_versioning.auto_commit_paths(
+                         paths=[snapshot_path],
+                         message=f"auto(project): stream snapshot user {user_id} - {query[:72]}"
+                     )
+                     if git_result.get("status") == "committed":
+                         build_msg += "\n\n🧾 Snapshot versionado automáticamente en Git."
+ 
+                 yield f"data: {json.dumps({'type': 'chunk', 'text': build_msg})}\n\n"
                  
                  # Save to chat log
                  db.add(ChatLog(user_id=user_id, role="assistant", content=build_msg, intent="PROJECT_BUILD"))
                  db.commit()
              except Exception as e:
                  err_msg = f"Inicié la construcción, pero el auditor detectó problemas o hubo un cuelgue matemático: {e}"
-                 yield f"data: {json.dumps({'type': 'chunk', 'text': err_msg})}\\n\\n"
+                 yield f"data: {json.dumps({'type': 'chunk', 'text': err_msg})}\n\n"
                  db.add(ChatLog(user_id=user_id, role="assistant", content=err_msg, intent="PROJECT_BUILD"))
                  db.commit()
              
-             yield f"data: {json.dumps({'type': 'done'})}\\n\\n"
+             yield f"data: {json.dumps({'type': 'done'})}\n\n"
              return
+
 
         if intent == "RESEARCH":
              # Yield technical wait message ONLY for research
@@ -231,14 +443,30 @@ class ChatService:
              return
 
         # 2. Personalization
+        word_count = len(query.split())
         user_profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
         profile_context = ""
         if user_profile:
             profile_context = f"\n[USER_TRAITS]: {user_profile.persona_summary}\n"
+        
+        # v13.0: Inyección de Memoria Persistente JSON (Stream)
+        json_memory_context = memory_service.get_formatted_json_memory()
+        profile_context += f"\n{json_memory_context}\n"
 
-        # 3. Cache Check (Playback enabled in v10.7.5)
-        cache_params = {"stream": True, "personalization": bool(profile_context)}
-        cached_res = smart_cache.get(query, llm_client.fast_model, cache_params, str(user_id))
+        # 3. Cache Check (Playback enabled in v10.7.5, bypass for attachments)
+        has_attachments = bool(images) or bool(files_context)
+        
+        # v12.1.5: Patrones que NUNCA deben usar cache para evitar "ecos" de alucinaciones
+        no_cache_keywords = ["qué has aprendido", "que sabes", "resumen de lo aprendido", "conocimiento acumulado"]
+        skip_cache = any(kw in query.lower() for kw in no_cache_keywords)
+
+        if has_attachments or skip_cache:
+            cached_res = None
+            cache_params = {}
+        else:
+            cache_params = {"stream": True, "personalization": bool(profile_context)}
+            cached_res = smart_cache.get(query, llm_client.fast_model, cache_params, str(user_id))
+            
         if cached_res:
             await system_service.track_metric("cache_hits")
             await system_service.track_metric("requests_total")
@@ -247,7 +475,8 @@ class ChatService:
                 yield chunk
             return
         
-        await system_service.track_metric("cache_misses")
+        if not has_attachments:
+            await system_service.track_metric("cache_misses")
 
         # 4. Context build
         knowledge_context = ""
@@ -283,31 +512,93 @@ class ChatService:
         full_response = ""  # Inicializado correctamente antes de cualquier lgica pesada
         full_response_prefix = "[VISTO POR NOVA 👁️] " if images else ""
         
-        # FIX: System role lleva SOLO la identidad (1 vez). User role lleva la consulta.
-        # Esto da separación limpia sin duplicación.
+        # v11.8.0: FAST LANE - Usar identidad minimalista para conversaciones sociales
+        # para reducir el tiempo de respuesta en CPU.
+        system_id = NOVA_SOCIAL_PROMPT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
+        
+        # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
+        _LEARNING_SUMMARY_PATTERNS = [
+            r"qu[ée]\s+has\s+aprendido",
+            r"resume\s+lo\s+(que|aprendido|acumulado)",
+            r"cu[ée]ntame\s+(que|lo que)\s+has\s+aprendido",
+            r"qu[ée]\s+conocimiento\s+tienes",
+        ]
+        
+        is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
+        if is_learning_summary:
+            system_id = NOVA_LEARNING_SUMMARY_PROMPT
+        
+        # En el carril rápido, enviamos la query cruda sin el template largo de RAG
+        # para ahorrar otros ~200 tokens de prefill.
+        # v13.8.16: Incluir contexto de archivos incluso en charla social
+        final_user_content = query
+        if intent == "CONVERSATION":
+            if files_context:
+                final_user_content = f"{files_context}\n\nMENSAJE DEL USUARIO: {query}"
+        else:
+            final_user_content = user_prompt
+
+        # v11.9.22: Skill Injection en Stream (Universal)
+        active_skills = ["terminal_skill", "browser_navigation_skill"]
+        skills_context = skill_manager.get_active_skills_context(active_skills)
+
         messages = [
-            {"role": "system", "content": NOVA_IDENTITY_PROMPT},
-            {"role": "user", "content": user_prompt}
+            {"role": "system", "content": system_id + skills_context},
+            {"role": "user", "content": final_user_content}
         ]
         
         try:
             yield f"data: {json.dumps({'type': 'meta', 'results_count': 1})}\n\n"
             
-            async for chunk in llm_client.chat_stream(messages, images=images, priority=0):
+            # v13.7.2: Buffers para Audio Streaming (Fase 2)
+            sentence_buffer = ""
+            
+            async for chunk in llm_gateway.chat_stream(messages, lane="realtime", images=images, priority=0):
                 if not full_response and full_response_prefix:
                     full_response = full_response_prefix
                 full_response += chunk
                 
+                # --- Lógica de Audio Streaming (Sentencia por Sentencia) ---
+                sentence_buffer += chunk
+                # Detectar fin de frase: punto, exclamación o interrogación seguidos de espacio o fin de línea
+                if any(punct in chunk for punct in [". ", "! ", "? ", ".\n", "!\n", "?\n"]):
+                    # Dividir buffer en sentencias completas
+                    parts = re.split(r'(?<=[.!?])\s+', sentence_buffer)
+                    if len(parts) > 1:
+                        to_speak = parts[:-1]
+                        sentence_buffer = parts[-1]
+                        for s in to_speak:
+                            s_clean = s.strip()
+                            if len(s_clean) > 10: # Evitar ruidos o fragmentos demasiado cortos
+                                # Generar MD5 para la caché
+                                from core.config import DATA_DIR
+                                # Simular parámetros de tts_engine para el hash
+                                cache_key = hashlib.md5(f"{s_clean}{1.0}{0}{nova_voice._model_name}{nova_voice.engine}".encode()).hexdigest()
+                                
+                                # Disparar síntesis en segundo plano (Fire and Forget)
+                                asyncio.create_task(nova_voice.synthesize(s_clean))
+                                
+                                # Notificar al frontend que hay un audio listo/preparándose
+                                yield f"data: {json.dumps({'type': 'audio', 'key': cache_key})}\n\n"
+                # -----------------------------------------------------------
+
                 # Check for insufficient knowledge early (simple logic)
                 if not images and "INSUFFICIENT_KNOWLEDGE" in full_response.upper():
                     async for f_chunk in self._handle_insufficient_knowledge(query, full_response): yield f_chunk
                     return
 
-                # Tool use detection (Regex robusto v10.7.0)
-                if re.search(r"</execute_(python|js)>", full_response):
-                    full_response = await self._handle_tool_execution(full_response, messages, llm_client)
-                    yield f"data: {json.dumps({'type': 'chunk', 'text': full_response})}\n\n"
-                    break
+                # v12.1.3: Tool use detection (Regex robusto y flexible)
+                if '"tool"' in full_response:
+                    # v12.1.3: Detección de intenciones generales para evitar alucinaciones de herramientas
+                    # v13.6.4: Sensibilidad aumentada (4 -> 6 palabras) y bloqueo total por intención
+                    is_social_only = word_count <= 6 and any(x in query.lower() for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
+                    is_meta_only = any(x in query.lower() for x in ["que sabes", "que has aprendido", "quién eres"])
+                    is_general_query = is_social_only or is_meta_only or (intent == "CONVERSATION")
+                    
+                    # Interceptor Genérico (v13.0)
+                    async for tool_chunk in self._intercept_tool_generic(user_id, full_response, query, is_general_query): 
+                        yield tool_chunk
+                    if user_id in pending_tools: return # Detener stream si se interceptó
 
                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
 
@@ -319,9 +610,26 @@ class ChatService:
                     yield f"data: {json.dumps({'type': 'chunk', 'text': correction})}\n\n"
                     full_response += correction
 
-            # Update cache with full response
-            smart_cache.set(query, llm_client.fast_model, cache_params, str(user_id), full_response)
+            # Update cache with full response (Bypass if attachments present)
+            if "tardó demasiado" not in full_response and not has_attachments:
+                smart_cache.set(query, llm_client.model, cache_params, str(user_id), full_response)
 
+            # v11.9.8: Explicit Memory Confirmation (Universal al final del stream)
+            from core.intent_classifier import _MEMORY_TRIGGERS
+            if any(re.search(pat, query, re.I) for pat in _MEMORY_TRIGGERS) or intent == "KNOWLEDGE":
+                conf = await memory_service.extract_and_store_memory(query, user_id)
+                if conf:
+                    conf_msg = f"\n\n> [!TIP]\n> **{conf}**"
+                    yield f"data: {json.dumps({'type': 'chunk', 'text': conf_msg})}\n\n"
+                    full_response += conf_msg
+
+            # Save to chat history DB
+            try:
+                db.add(ChatLog(user_id=user_id, role="assistant", content=full_response, intent=intent))
+                db.commit()
+            except:
+                pass
+            
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             
             latency = (time.time() - start_time) * 1000
@@ -376,7 +684,7 @@ class ChatService:
             ]
             
             # Force temperature=0.0 to prevent any identity-based "fluff" or hallucinations
-            async for chunk in llm_client.chat_stream(messages, temperature=0.0, priority=0):
+            async for chunk in llm_gateway.chat_stream(messages, lane="realtime", temperature=0.0, priority=0):
                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
             
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -449,6 +757,135 @@ class ChatService:
             final_response += chunk
         return final_response
 
+    async def _intercept_tool_generic(self, user_id: int, full_text: str, original_query: str, is_general: bool = False) -> AsyncGenerator[str, None]:
+        """Interceptor universal para herramientas en formato JSON."""
+        try:
+            match = re.search(r'\{.*"tool":\s*"([^"]+)".*\}', full_text, re.DOTALL)
+            if not match: return
+            try:
+                json_str = match.group(0)
+                json_str = json_str.replace("<execute_tool>", "").replace("</execute_tool>", "").strip()
+                
+                # v13.5.6: Fix para JSON sucio (barras invertidas sin escapar en rutas de Windows)
+                try:
+                    data = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Intento de reparación: Escapar barras invertidas que no estén ya escapadas
+                    # Pero solo si parecen rutas (ej: C:\ o \Users)
+                    repaired_json = re.sub(r'(?<!\\)\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r'\\\\', json_str)
+                    data = json.loads(repaired_json)
+                    logger.info(f"JSON reparado exitosamente: {json_str[:50]}...")
+            except Exception as e:
+                logger.warning(f"Error parseando JSON de herramienta: {e} | Texto: {json_str[:100]}")
+                return 
+            if is_general: return
+            tool = data.get("tool")
+            # v13.6.4: Evitar literal 'undefined' de alucinaciones del LLM
+            desc = data.get("description")
+            if not desc or str(desc).lower() == "undefined":
+                desc = f"Acción de {tool}"
+                
+            pending_tools[user_id] = {"tool": tool, "data": data, "original_query": original_query}
+            icons = {"terminal": "💻", "browser": "🌐", "gws": "📅", "vision": "👁️"}
+            icon = icons.get(tool, "🛠️")
+            msg = f"\n\n> [!IMPORTANT]\n> {icon} **NOVA solicita usar la herramienta: {tool.upper()}**\n> **Acción:** {desc}\n"
+
+            if tool == "terminal": msg += f"> ```bash\n{data.get('command')}\n```\n"
+            elif tool == "gws": msg += f"> **Módulo:** {data.get('action')} | **Comando:** {data.get('command')}\n"
+            elif tool == "vision":
+                msg += f"> **Operación:** {data.get('action')}\n"
+                if data.get("x") is not None: msg += f"> **Coordenadas:** ({data.get('x')}, {data.get('y')})\n"
+            msg += f"> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
+            yield f"data: {json.dumps({'type': 'chunk', 'text': msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            logger.error(f"Error intercepting tool generic: {e}")
+
+    async def _execute_pending_tool(self, user_id: int, db: Any) -> AsyncGenerator[str, None]:
+        """Ejecuta la herramienta aprobada y re-alimenta a NOVA."""
+        pending_data = pending_tools.pop(user_id, None)
+        if not pending_data: return
+        
+        tool = pending_data.get("tool")
+        observation = ""
+        
+        if tool == "terminal":
+            command = pending_data.get("command")
+            if not command:
+                yield f"data: {json.dumps({'type': 'chunk', 'text': '❌ Error: Comando no encontrado.'})}\n\n"
+                return
+            yield f"data: {json.dumps({'type': 'chunk', 'text': '⚙️ Ejecutando comando de terminal...'})}\n\n"
+            result = await tool_executor.execute_terminal(command)
+            observation = (
+                f"\n[RESULTADO DEL COMANDO]\n"
+                f"STDOUT: {result['stdout']}\n"
+                f"STDERR: {result['stderr']}\n"
+                f"STATUS: {result['status']}"
+            )
+        elif tool == "browser":
+            objective = pending_data.get("objective")
+            yield f"data: {json.dumps({'type': 'chunk', 'text': '🌐 Navegando por la web...'})}\n\n"
+            from agents.browser_agent import browser_agent
+            result = await browser_agent.run_task(objective)
+            observation = f"\n[RESULTADO DE NAVEGACIÓN]\n{result['result'] if result['success'] else result['error']}"
+        
+        elif tool == "gws":
+            action = pending_data.get("action")
+            command = pending_data.get("command")
+            yield f"data: {json.dumps({'type': 'chunk', 'text': f'📅 Accediendo a Google Workspace ({action})...'})}\n\n"
+            from services.gws_service import gws_service
+            if action == "agenda":
+                res = await gws_service.get_agenda()
+                observation = f"\n[AGENDA DE GWS]\n{res}"
+            elif action == "gmail":
+                if command == "triage":
+                    res = await gws_service.get_gmail_triage()
+                    observation = f"\n[TRIAJE DE GMAIL]\n{res}"
+                else: observation = f"\n[GWS] Comando {command} no implementado."
+            else: observation = f"\n[GWS] Acción {action} no soportada."
+
+        elif tool == "vision":
+            action = pending_data.get("action")
+            yield f"data: {json.dumps({'type': 'chunk', 'text': f'👁️ Ejecutando acción visual ({action})...'})}\n\n"
+            from services.vision_service import vision_service
+            if action == "capture":
+                res = vision_service.capture_screen()
+                observation = f"\n[VISIÓN] Captura realizada en {res['path']}."
+            elif action == "find":
+                res = await vision_service.find_element_on_screen(pending_data.get("description", ""))
+                observation = f"\n[VISIÓN] Elemento localizado: {res}"
+            elif action == "click":
+                success = vision_service.click(pending_data.get("x"), pending_data.get("y"), clicks=pending_data.get("clicks", 2))
+                observation = f"\n[VISIÓN] Clic ejecutado en ({pending_data.get('x')}, {pending_data.get('y')}). Éxito: {success}"
+            elif action == "type":
+                success = vision_service.type_text(pending_data.get("text", ""))
+                observation = f"\n[VISIÓN] Texto escrito: {pending_data.get('text')}. Éxito: {success}"
+            elif action == "press":
+                success = vision_service.press_key(pending_data.get("key", "enter"))
+                observation = f"\n[VISIÓN] Tecla presionada: {pending_data.get('key')}. Éxito: {success}"
+            elif action == "calibrate":
+                res = vision_service.calibrate()
+                observation = f"\n[VISIÓN] {res}"
+            else: observation = f"\n[VISIÓN] Acción {action} no soportada."
+
+        else:
+            yield f"data: {json.dumps({'type': 'chunk', 'text': '❌ Herramienta desconocida.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+        
+        # Re-alimentar al modelo
+        messages = [
+            {"role": "system", "content": NOVA_IDENTITY_PROMPT},
+            {"role": "user", "content": pending_data["original_query"]},
+            {"role": "assistant", "content": f"Solicité usar {tool}: {pending_data.get('command') or pending_data.get('objective') or pending_data.get('action')}"},
+            {"role": "user", "content": observation}
+        ]
+        
+        async for chunk in llm_gateway.chat_stream(messages, lane="realtime", priority=0):
+            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+             
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
     async def _playback_cached_response(self, text: str) -> AsyncGenerator[str, None]:
         """
         Simulates streaming for a cached response to maintain UI flow.
@@ -470,3 +907,5 @@ class ChatService:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 chat_service = ChatService()
+
+

@@ -27,7 +27,7 @@ class ProactiveService:
         return {"sent": sent, "message": message}
 
     async def setup_telegram_webhook(self, public_url: str) -> Dict[str, Any]:
-        webhook_url = f"{public_url.rstrip('/')}/telegram/webhook"
+        webhook_url = f"{public_url.rstrip('/')}/api/telegram/webhook"
         async with httpx.AsyncClient() as client:
             r = await client.post(f"{TELEGRAM_API}/setWebhook", json={"url": webhook_url})
             data = r.json()

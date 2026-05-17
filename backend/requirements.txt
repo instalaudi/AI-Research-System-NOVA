@@ -24,3 +24,11 @@ PyJWT
 pymupdf
 EbookLib
 html2text
+browser-use
+playwright
+lightrag-hku
+python-pptx
+python-docx
+pyautogui
+opencv-python
+pillow

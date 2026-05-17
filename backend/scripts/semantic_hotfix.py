@@ -1,5 +1,12 @@
-from core.database import SessionLocal, KnowledgeEntry
+import os
+import sys
 import unicodedata
+
+# Add project paths to import core modules dynamically
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(BASE_DIR)
+
+from core.database import SessionLocal, KnowledgeEntry
 
 def normalize_text(text: str) -> str:
     if not text: return ""
@@ -45,7 +52,8 @@ def run_hotfix():
                 merged = current_tags | new_tags
                 entry.concepts = ",".join(list(merged))
                 updated_count += 1
-                print(f"Propagado {new_tags} a: {entry.title[:50]}...")
+                tags_str = ", ".join(new_tags)
+                print(f"Propagado [{tags_str}] a: {entry.title[:50]}...")
         
         db.commit()
         print(f"\nHotfix completado. {updated_count} entradas actualizadas.")

@@ -1,15 +1,23 @@
 import asyncio
 import httpx
 import re
-import feedparser
 import math
 import random
-from bs4 import BeautifulSoup # type: ignore
 from typing import List, Dict, Any, Optional
-from core.config import MAX_ARTICLES_PER_TOPIC, RELEVANCE_THRESHOLD, USER_AGENTS
-from core.llm_client import llm_client
 import urllib.parse
 from agents.base_agent import BaseAgent
+from core.config import MAX_ARTICLES_PER_TOPIC, RELEVANCE_THRESHOLD
+from core.llm_client import llm_client
+
+try:
+    import feedparser
+except ImportError:
+    feedparser = None
+
+try:
+    from bs4 import BeautifulSoup  # type: ignore
+except ImportError:
+    BeautifulSoup = None
 
 # Global list of User-Agents for rotation
 USER_AGENTS = [
@@ -19,8 +27,10 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
 ]
 
-# Global semaphore to serialize web searches across all workers
-search_semaphore = asyncio.Semaphore(1)
+# Dedicated semaphores per source to allow high-concurrency parallel queries without bottlenecks
+ddg_semaphore = asyncio.Semaphore(1)
+semantic_scholar_semaphore = asyncio.Semaphore(1)
+google_scholar_semaphore = asyncio.Semaphore(1)
 
 # SEC-05: SSRF Protection - Blocked schemes and domains
 BLOCKED_SCHEMES = ['file', 'ftp', 'gopher', 'data', 'javascript']
@@ -116,14 +126,16 @@ class ExplorerAgent(BaseAgent):
     def __init__(self, name: str = "Explorer"):
         super().__init__(name)
         self._http_client = None
+        self._client_lock = asyncio.Lock()
         self.cache = SearchCache()
 
     async def _get_client(self):
         """Lazy initialization of the HTTP client to ensure it's created within the running loop."""
-        if getattr(self, "_http_client", None) is None or self._http_client.is_closed:
-            import httpx
-            self._http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-        return self._http_client
+        async with self._client_lock:
+            if getattr(self, "_http_client", None) is None or self._http_client.is_closed:
+                import httpx
+                self._http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+            return self._http_client
 
     async def close(self):
         """Closes the underlying HTTP client to prevent resource leaks."""
@@ -241,63 +253,77 @@ class ExplorerAgent(BaseAgent):
                             "is_fallback": False,
                             "quality_flag": "scientific_base"
                         }]
+                    else:
+                        print(f"[{self.name}] Wikipedia Summary API error: {summ_resp.status_code} - {summ_resp.text[:100]}")
+                else:
+                    print(f"[{self.name}] Wikipedia Search returned no results for: {simplified}")
             else:
                 print(f"[{self.name}] Wikipedia API error: {resp.status_code} - {resp.text[:100]}")
         except Exception as e:
-            print(f"[{self.name}] Unexpected error: {e}")
+            print(f"[{self.name}] Unexpected error in Wikipedia search: {e}")
         return []
 
     async def _search_arxiv(self, topic: str) -> List[Dict[str, str]]:
-        """Fetches from ArXiv API using feedparser via HTTPS."""
+        """Fetches from ArXiv API using feedparser via HTTPS with retry backoff."""
         simplified = self._simplify_query(topic)
         print(f"[{self.name}] Searching ArXiv for papers: {simplified}")
-        # Use HTTPS to avoid 301 Redirect
         url = f"https://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(simplified)}&start=0&max_results=5"
         try:
             client = await self._get_client()
-            response = await client.get(url)
-            if response.status_code == 200:
-                # FIX: feedparser.parse puede lanzar excepciones de red/parse inesperadas
-                try:
-                    feed = feedparser.parse(response.text)
-                except Exception as fp_err:
-                    print(f"[{self.name}] feedparser parse error: {fp_err}")
-                    return []
-                entries = []
-                for entry in feed.entries:
-                    entries.append({
-                        "title": getattr(entry, 'title', 'Sin título'),
-                        "url": getattr(entry, 'link', ''),
-                        "summary": getattr(entry, 'summary', '')[:500],
-                        "full_content": getattr(entry, 'summary', ''),
-                        "is_fallback": False,
-                        "quality_flag": "scientific_paper"
-                    })
-                return entries
+            for attempt in range(3):
+                response = await client.get(url)
+                if response.status_code == 200:
+                    try:
+                        feed = feedparser.parse(response.text)
+                    except Exception as fp_err:
+                        print(f"[{self.name}] feedparser parse error: {fp_err}")
+                        return []
+                    entries = []
+                    for entry in feed.entries:
+                        entries.append({
+                            "title": getattr(entry, 'title', 'Sin título'),
+                            "url": getattr(entry, 'link', ''),
+                            "summary": getattr(entry, 'summary', '')[:500],
+                            "full_content": getattr(entry, 'summary', ''),
+                            "is_fallback": False,
+                            "quality_flag": "scientific_paper"
+                        })
+                    return entries
+                elif response.status_code == 429:
+                    wait = (2 ** (attempt + 2)) + random.uniform(2, 5)
+                    print(f"[{self.name}] ArXiv rate limited (429). Retrying in {wait:.1f}s...")
+                    await asyncio.sleep(wait)
+                else: break
         except Exception as e:
             print(f"[{self.name}] ArXiv error: {e}")
         return []
 
     async def _search_semantic(self, topic: str) -> List[Dict[str, str]]:
         """Searches Semantic Scholar with caching and rate limiting.
-        FIX: Ahora adquiere search_semaphore para evitar bursts concurrentes entre workers.
+        v11.9.0: Backoff mejorado + soporte de API key + caché de resultados vacíos.
         """
-        cached = self.cache.get(topic, "semantic")
-        if cached:
-            print(f"[{self.name}] Using cached results for Semantic Scholar: {topic}")
+        simplified = self._simplify_query(topic)
+        cached = self.cache.get(simplified, "semantic")
+        if cached is not None:  # v11.9: cached puede ser [] (resultado vacío cacheado)
+            print(f"[{self.name}] Using cached results for Semantic Scholar: {simplified}")
             return cached
 
-        simplified = self._simplify_query(topic)
         print(f"[{self.name}] Searching Semantic Scholar: {simplified}")
         url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={urllib.parse.quote(simplified)}&limit=5&fields=title,abstract,url,year,citationCount"
 
-        # FIX: Usar semáforo global para serializar peticiones y hacer el sleep efectivo
-        async with search_semaphore:
-            await asyncio.sleep(1.0)  # Rate limit real: solo 1 worker a la vez espera y envía
+        # v11.9.0: Soporte de API key para rate limit más alto (1 req/s → 100 req/s)
+        from core.config import SEMANTIC_SCHOLAR_API_KEY
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        if SEMANTIC_SCHOLAR_API_KEY:
+            headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
+
+        # Dedicated semantic scholar semaphore to avoid global bottlenecks
+        async with semantic_scholar_semaphore:
+            await asyncio.sleep(3.0)  # Rate limit real: solo 1 worker a la vez espera y envía
             try:
                 client = await self._get_client()
                 for attempt in range(3):
-                    response = await client.get(url, headers={"User-Agent": random.choice(USER_AGENTS)})
+                    response = await client.get(url, headers=headers)
                     if response.status_code == 200:
                         data = response.json()
                         papers = []
@@ -311,14 +337,18 @@ class ExplorerAgent(BaseAgent):
                                 "is_fallback": False,
                                 "quality_flag": "academic_impact"
                             })
-                        self.cache.set(topic, "semantic", papers)
+                        self.cache.set(simplified, "semantic", papers)
                         return papers
                     elif response.status_code == 429:
-                        wait = (2 ** (attempt + 2)) + random.uniform(1, 3)
-                        print(f"[{self.name}] Semantic Scholar rate limited (429). Retrying in {wait:.1f}s...")
+                        # v11.9.0: Backoff exponencial más agresivo: 5s, 10s, 20s + jitter
+                        wait = (5 * (2 ** attempt)) + random.uniform(1, 3)
+                        print(f"[{self.name}] Semantic Scholar rate limited (429). Retrying in {wait:.1f}s... (attempt {attempt+1}/3)")
                         await asyncio.sleep(wait)
                     else:
+                        print(f"[{self.name}] Semantic Scholar HTTP {response.status_code}")
                         break
+                # v11.9.0: Cachear resultados vacíos con TTL corto (1h) para evitar re-queries inútiles
+                self.cache.set(simplified, "semantic", [])
             except Exception as e:
                 print(f"[{self.name}] Semantic Scholar error: {e}")
         return []
@@ -379,6 +409,9 @@ class ExplorerAgent(BaseAgent):
         
         if response and response.status_code == 200:
             try:
+                if BeautifulSoup is None:
+                    print(f"[{self.name}] BeautifulSoup not installed. Skipping DDG scraping.")
+                    return web_results
                 soup = BeautifulSoup(response.text, "html.parser")
                 for result in soup.find_all("div", class_="result")[:MAX_ARTICLES_PER_TOPIC]:
                     title_tag = result.find("a", class_="result__a")
@@ -421,22 +454,25 @@ class ExplorerAgent(BaseAgent):
         return web_results
 
     async def _search_google_scholar(self, topic: str) -> List[Dict[str, str]]:
-        """Searches Google Scholar with caching and rate limiting.
-        FIX: Ahora adquiere search_semaphore para evitar bursts concurrentes entre workers.
-        """
-        cached = self.cache.get(topic, "google_scholar")
+        """Searches Google Scholar with caching and rate limiting."""
+        simplified = self._simplify_query(topic)
+        cached = self.cache.get(simplified, "google_scholar")
         if cached:
-            print(f"[{self.name}] Using cached results for Google Scholar: {topic}")
+            print(f"[{self.name}] Using cached results for Google Scholar: {simplified}")
             return cached
 
-        simplified = self._simplify_query(topic)
         print(f"[{self.name}] Searching Google Scholar: {simplified}")
         results = []
+
+        if BeautifulSoup is None:
+            print(f"[{self.name}] BeautifulSoup not installed. Skipping Google Scholar.")
+            return results
+
         safe_topic = urllib.parse.quote(simplified)
         url = f"https://scholar.google.com/scholar?q={safe_topic}"
 
-        # FIX: Usar semáforo global para serializar peticiones y hacer el sleep efectivo
-        async with search_semaphore:
+        # Dedicated Google Scholar semaphore to avoid global bottlenecks
+        async with google_scholar_semaphore:
             await asyncio.sleep(1.0)  # Rate limit real: solo 1 worker a la vez espera y envía
             try:
                 client = await self._get_client()
@@ -463,7 +499,7 @@ class ExplorerAgent(BaseAgent):
                             "is_fallback": False,
                             "quality_flag": "academic_scholar"
                         })
-                    self.cache.set(topic, "google_scholar", results)
+                    self.cache.set(simplified, "google_scholar", results)
                 elif response.status_code == 429:
                     print(f"[{self.name}] Google Scholar Rate Limited (429).")
             except Exception as e:
@@ -489,6 +525,9 @@ class ExplorerAgent(BaseAgent):
             if response.status_code == 200:
                 raw_bytes = response.content[:self._MAX_DOWNLOAD_BYTES]
                 raw_text = raw_bytes.decode(response.encoding or "utf-8", errors="replace")
+                if BeautifulSoup is None:
+                    print(f"[{self.name}] BeautifulSoup not installed. Skipping content parsing.")
+                    return {"text": "", "images": []}
                 soup = BeautifulSoup(raw_text, "html.parser")
                 
                 # Image Extraction
@@ -533,7 +572,7 @@ class ExplorerAgent(BaseAgent):
 
         # 2. Serialized Web Search (DuckDuckGo represents Bing Index)
         web_results = []
-        async with search_semaphore:
+        async with ddg_semaphore:
             web_results = await self._search_web_duckduckgo(topic)
 
         # 3. Collect all results

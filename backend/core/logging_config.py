@@ -57,35 +57,35 @@ class SensitiveDataFilter(logging.Filter):
         return text
 
 
-class JsonFormatter(logging.Formatter):
+class CompactFormatter(logging.Formatter):
     """
-    Custom JSON Formatter for structured logging.
+    Formateador compacto y legible (v12.0.2).
+    Ahorra espacio en disco y es más fácil de leer para humanos.
     """
     def format(self, record: logging.LogRecord) -> str:
-        log_entry: Dict[str, Any] = {
-            "timestamp": self.formatTime(record, self.datefmt),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "request_id": request_id_var.get(),
-        }
-
-        # Add extra fields if provided via 'extra' parameter
-        if hasattr(record, "extra_fields"):
-            log_entry.update(record.extra_fields)
-
+        # v12.0.2: Reducción de boilerplate para ahorrar espacio
+        timestamp = self.formatTime(record, "%H:%M:%S")
+        level = record.levelname[:4] # INFO -> INFO, WARNING -> WARN, ERROR -> ERRO
+        logger_name = record.name.split(".")[-1] # core.lightrag -> lightrag
+        request_id = request_id_var.get()
+        rid_str = f" [{request_id[:8]}]" if request_id != "system" else ""
+        
+        message = record.getMessage()
+        
+        # Si hay excepción, añadirla de forma compacta
+        exc_str = ""
         if record.exc_info:
-            log_entry["exception"] = self.formatException(record.exc_info)
-
-        return json.dumps(log_entry)
+            exc_str = f"\n  ERROR: {self.formatException(record.exc_info)}"
+            
+        return f"[{timestamp}] {level} [{logger_name}]{rid_str} {message}{exc_str}"
 
 def setup_logging(level: int = logging.INFO):
     """
     Sets up the global logging configuration.
     """
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter())
-    handler.addFilter(SensitiveDataFilter())  # BUG #1 FIX: Redactar tokens en todos los logs
+    handler.setFormatter(CompactFormatter())
+    handler.addFilter(SensitiveDataFilter())
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
@@ -99,6 +99,7 @@ def setup_logging(level: int = logging.INFO):
     # Silence some noisy loggers
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("phonemizer").setLevel(logging.ERROR) # Silenciar avisos de mismatch de palabras
 
 # Helper to log with extra fields easily
 def get_logger(name: str):

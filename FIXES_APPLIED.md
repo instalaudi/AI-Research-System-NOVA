@@ -2,6 +2,197 @@
 
 ---
 
+## [v11.9.22] - Mayo 1, 2026 (Auditoría Integral y Motor de Agente Activo)
+
+### ✅ Resolución Crítica: Bloqueo de Concurrencia en VectorDB
+- **Problema:** Las llamadas síncronas a ChromaDB (`upsert`, `query`, `delete`) bloqueaban el Event Loop de FastAPI, causando latencia masiva y errores de "coroutine failure" bajo carga.
+- **Solución:** Se refactorizaron 10 métodos core en `backend/core/vector_db.py` para usar `await asyncio.to_thread()`, delegando la carga pesada de disco a hilos secundarios y liberando el servidor para peticiones simultáneas.
+
+### ✅ Estabilización Transaccional en TaskQueue
+- **Problema:** Al cancelar tareas por timeout o error, SQLite podía quedar en estado "database is locked" o dejar registros a medias.
+- **Solución:** Implementación de bloques `try-except-rollback` en las funciones de persistencia de `task_queue.py`. Cualquier fallo en el `db.commit()` ahora dispara un `db.rollback()` inmediato, garantizando la integridad ACID de la base de datos local.
+
+### ✅ Implementación de Motor de Skills y Tool Calling
+- **Problema:** Necesidad de evolucionar a NOVA hacia capacidades similares a Claude Code o OpenDevin (manipulación de archivos/consola) sin comprometer la seguridad del SO.
+- **Solución:**
+  - Creación del `SkillManager` para inyección dinámica de conocimiento.
+  - Implementación de un **Bucle de Aprobación Humana (Human-in-the-Loop)** en `chat_service.py` que intercepta comandos de terminal y espera la confirmación del usuario por chat antes de proceder.
+  - Desarrollo del `ToolExecutor` con **Firewall de Seguridad** integrado que bloquea patrones de manipulación de Windows (`C:\Windows`, registro, borrado global) y protege el código núcleo de NOVA.
+
+---
+
+## [v11.9.21] - Abril 30, 2026 (Auto-Evolución y Resurrección Autónoma)
+
+### ✅ Resolución de Cuello de Botella en Despliegues de IA
+- **Problema:** El sistema generaba código válido (ej. integraciones como LangGraph) pero lo descartaba por restricciones de escritura, requiriendo intervención humana.
+- **Solución:**
+  - Se habilitó la escritura autónoma permanente (`ALLOW_AUTO_FILE_WRITE = True`).
+  - Se implementó un escudo de **Backups Automáticos** (`_backup_and_apply_files`) que respalda archivos base antes de cualquier mutación producida por la IA.
+  - Implementación de un **Gatillo de Resurrección** (`_trigger_reboot`) que interactúa con el orquestador maestro (puerto 9999) para forzar un reinicio en caliente y cargar los nuevos cambios en la RAM.
+
+### ✅ Persistencia y Ampliación de Logs del Sistema
+- **Problema:** El historial de eventos del Control Center se borraba al alcanzar las 600 líneas (límite de memoria), perdiendo trazabilidad valiosa.
+- **Solución:** 
+  - Aumento del límite de la memoria dinámica en pantalla a 5000 líneas.
+  - Implementación de escritura persistente en archivos físicos (ej. `logs/logs_backend.txt`), garantizando que la historia jamás se pierda entre reinicios.
+
+### ✅ Conciencia de Hardware Dinámica
+- **Problema:** En ciclos de generación (Developer) o auto-evolución, la IA podía alucinar o proponer arquitecturas pesadas (ej. LangGraph) no óptimas para un entorno de CPU local.
+- **Solución:** Se creó un sensor telemétrico (`get_hardware_context`) que inyecta los núcleos, RAM total y detección de GPU en tiempo real directo en la personalidad base de NOVA (Regla de Oro 10). Ahora la IA está programada para rechazar bibliotecas excesivas si detecta limitaciones físicas.
+
+---
+
+## [v11.9.20] - Abril 29, 2026 (Estabilización de Generación)
+
+### ✅ Resolución de Bucle Infinito en Builds
+- **Problema:** El sistema intentaba 5 veces generar el mismo código erróneo, desperdiciando ~40 min de CPU.
+- **Causa:** El Auditor era demasiado estricto y el Developer no aprendía de las críticas repetidas.
+- **Solución:** 
+  - Aborto temprano ante críticas repetidas (>80% similitud).
+  - Auditoría enfocada en ejecución, no en estilo.
+  - Detección local de truncamiento de archivos.
+
+### ✅ Gestión de Recursos durante Construcción
+- **Problema:** La evolución autónoma saturaba la CPU mientras se generaba un proyecto.
+- **Solución:** Implementación de `has_active_builds()` en `system_service.py` para bloquear tareas de fondo.
+
+### ✅ Sincronización de Actividad Telegram
+- **Problema:** El sistema no sabía que el usuario estaba activo si hablaba por Telegram, lanzando tareas pesadas de fondo.
+- **Solución:** Inyección de `record_user_activity()` en el procesador de actualizaciones de Telegram.
+
+---
+
+
+
+### ✅ Erradicación de Bucle "Orita" (Amnesia Selectiva)
+- **Problema:** NOVA repetía respuestas genéricas sobre "Hola! ¿Cómo estás?" o "necesito un archivo adjunto", ignorando órdenes de memoria.
+- **Causa:** La base de datos (ChatLog) y la caché contenían registros de errores previos que el LLM imitaba como parte del contexto ("Few-shot bias").
+- **Solución:** 
+  - **Esterilización:** Script de limpieza que eliminó registros contaminados.
+  - **Aislamiento de Contexto:** Reducción estricta de la historia a 0-1 mensajes para tareas de `KNOWLEDGE` y `VISION`.
+  - **Prioridad de Intención:** Reordenamiento en `intent_classifier.py` para que la memoria prevalezca sobre saludos.
+
+### ✅ Optimización de Arranque ("Modo Turbo")
+- **Problema:** El inicio del sistema era lento y los logs tardaban en aparecer.
+- **Causa:** El launcher esperaba 20s en vacío y el backend cargaba módulos pesados (STT, TTS, Integridad) de forma secuencial.
+- **Solución:** 
+  - **Paralelización:** Uso de `asyncio.gather` en `main.py` para cargar subsistemas simultáneamente.
+  - **Warm-up Delay:** Reducción de la espera en `launcher_server.py` de 20s a 10s.
+
+### ✅ Resolución de Símbolos Extraños y Crashes de Terminal
+- **Problema:** La terminal mostraba caracteres como `Ôöò` y fallaba al abrir el archivo `.bat`.
+- **Causa:** Desajuste de codificación (CP1252 vs UTF-8) y errores de sintaxis en Python al imprimir ASCII art con barras invertidas (`\`) finales.
+- **Solución:** 
+  - **UTF-8 Forzado:** Implementación de `chcp 65001` en scripts de arranque.
+  - **Raw Strings & Safe ASCII:** Migración a `print(r"...")` y adición de espacios de seguridad para evitar escapes de comillas en Python.
+  - **Color Neon Blue:** Activación de `color 0B` para estética profesional.
+
+---
+
+## [v11.8.3] - Abril 16, 2026 (Refinamiento de Intenciones)
+
+### ✅ Erradicación de "Proyectos Fantasma"
+- **Problema:** NOVA iniciaba la construcción de software complejo ante palabras simples como "adelante" o "hazlo".
+- **Causa:** Disparadores demasiado genéricos en `intent_classifier.py` y falta de validación de longitud en `chat_service.py`.
+- **Solución:** 
+  - Refactorización de `_PROJECT_BUILD_TRIGGERS` para exigir términos explícitos.
+  - Implementación de un **Interaction Guard** que exige un mínimo de 5 palabras para activar el `DeveloperAgent`.
+
+---
+
+## [v11.8.2] - Abril 16, 2026 (Estabilización Turbo)
+
+### ✅ Resolución de "Hang Semántico" (Asincronía Total)
+- **Problema:** El sistema se colgaba intermitentemente durante la inyección de conocimiento o búsqueda de similares.
+- **Causa:** Llamadas síncronas a ChromaDB bloqueando el bucle de eventos de FastAPI/Asincronía.
+- **Solución:** Conversión total de la arquitectura `VectorDB` a métodos `async`. Todas las interacciones ahora usan `await`, liberando el hilo principal.
+
+### ✅ Optimización de Memoria (Manual Vector Control)
+- **Problema:** Consumo excesivo de RAM (~500MB extra) y errores de inicialización ("Expected 384 dimensions, got 0").
+- **Causa:** Dependencia de funciones de embedding automáticas de ChromaDB que intentaban cargar modelos duplicados.
+- **Solución:** Migración a **Control Manual de Vectores**. NOVA genera el embedding una vez y lo pasa directamente a la base de datos, eliminando la sobrecarga.
+
+### ✅ Protección contra PDFs Corruptos (DLQ)
+- **Problema:** Crash o bucle de logs infinitos al procesar documentos malformados.
+- **Solución:** Implementación de un sistema de **Dead Letter Queue**. Los archivos con errores de estructura se marcan en `corrupt_files.json` y se omiten automáticamente en futuros escaneos.
+
+---
+
+## [v11.8.1] - Abril 16, 2026 (Resiliencia de Telegram)
+
+### ✅ Fix de Límite de Caracteres en Telegram (4096)
+- **Problema:** NOVA dejaba de responder en Telegram cuando la respuesta era muy extensa (logs, reportes largos).
+- **Causa:** Error `400: Message is too long` de la API de Telegram.
+- **Solución:** Implementación de un motor de **Fallback a Documento**. Si el mensaje excede el límite, se genera un archivo `.txt` al vuelo y se envía como documento adjunto.
+
+---
+
+## [v11.8.0] - Abril 16, 2026 (Turbo Performance & Global Stability)
+
+### ✅ Erradicación de Latencia de Búsqueda Vectorial (28s -> <0.1s)
+- **Problema:** El sistema se congelaba durante la fase de "Intelligence Gathering" debido a latencias de hasta 30 segundos por cada artículo evaluado.
+- **Causa:** Saturación de la cola de Ollama al pedir vectores de embedding de forma concurrente con la generación de texto, además de sobrecarga de contexto en el modelo lento.
+- **Solución:** Migración a **Local Embeddings** usando `sentence-transformers` con el modelo `all-MiniLM-L6-v2`. El procesamiento vectorial ahora ocurre en milisegundos directamente en la CPU, liberando a Ollama para enfocarse 100% en la inferencia lógica.
+
+### ✅ Resolución definitiva de Errores 500 (Gridlock de CPU)
+- **Problema:** Durante investigaciones pesadas, el servidor FastAPI arrojaba Error 500 y Ollama se desconectaba.
+- **Causa:** Saturación total de los 16 hilos del procesador Ryzen. El Warm-up y las tareas convergían al 100% de uso, provocando timeouts de red.
+- **Solución:** 
+  - Ajuste de **CPU Affinity** mediante el parámetro `OLLAMA_NUM_THREAD=4`.
+  - Implementación de **Prioridades 3-Tier**: Chat (0), Research (1), Background (2).
+  - Reducción de la concurrencia maestra a 2 canales simultáneos para balancear carga.
+
+### ✅ Resiliencia ante Rate Limits (429) en ArXiv/Scholar
+- **Problema:** El ExplorerAgent fallaba al obtener papers científicos, retornando listas vacías por bloqueos de IP temporales.
+- **Solución:** Implementación de bucles de reintento con **Exponential Backoff** (espera incremental de 4s, 8s, 16s) y fluctuación aleatoria (jitter) para evitar patrones de bot.
+
+---
+
+## [v11.1.2] - Abril 13, 2026 (Assets Manager, Git Timeline & Diff UX)
+
+### ✅ Fix de rutas API duplicadas en frontend
+
+- **Problema:** Algunas llamadas usaban `apiFetch("/api/...")` mientras `apiFetch` ya antepone `/api`, provocando rutas finales inválidas (`/api/api/...`).
+- **Solución:** Normalización a rutas relativas correctas (`/projects/list`, `/snippets/search`, `/history/search`, `/git/history`).
+
+### ✅ Manejo de errores desacoplado por pestaña
+
+- **Problema:** Un error en librería/historial bloqueaba toda la vista de ProjectManager.
+- **Solución:** Estados de error separados por módulo (`projectsError`, `snippetsError`, `historyError`, `gitError`) con renderizado local por sección.
+
+### ✅ Versionado Git automático seguro
+
+- **Implementación:** Snapshot de build en `data/project_snapshots/` + auto-commit local por rutas explícitas (sin `git add -A`).
+- **Resultado:** Se evita incluir cambios no relacionados en repositorio con worktree sucio.
+
+### ✅ Historial Git y visualización de diffs en UI
+
+- **Backend:** Endpoints `GET /api/git/history` y `GET /api/git/diff/{commit_hash}`.
+- **Frontend:** Pestaña `Git` con lista de commits y panel lateral de diff.
+- **UX:** Cierre de panel por botón, overlay clickeable y tecla `Escape`.
+
+---
+
+## [v11.1.1] - Abril 13, 2026 (Project Management & UX Enhancement)
+
+### ✅ Fix de UX en Creación de Proyectos
+
+- **Problema:** Después de crear un proyecto, el usuario recibía el archivo ZIP descargado automáticamente sin poder ver o acceder fácilmente a sus proyectos previos.
+- **Causa:** El flujo de creación de proyectos no tenía un sistema de gestión centralizado. Los proyectos se generaban y entregaban directamente sin opciones de almacenamiento/listado.
+- **Solución:** 
+  - Implementación de `ProjectManager.tsx` como componente dedicado para gestión de proyectos
+  - Creación del endpoint `GET /api/projects/list` para obtener historial de proyectos del usuario
+  - Lógica de cambio automático de pestaña cuando se detecta creación exitosa
+  - Interfaz mejorada con metadatos de proyectos (tamaño, fecha, nombre)
+
+### 🎯 Mejoras de UX
+
+- **Flujo Streamlined**: Crear → Detectar → Navegar es automático sin intervención del usuario.
+- **Gestión Centralizada**: Todos los proyectos en un solo lugar con opciones de descarga flexible.
+- **Metadatos Dinámicos**: Formateo automático de tamaños de archivo y fechas en zona horaria local.
+
+---
+
 ## [v11.1.0] - Abril 2026 (Neural Telegram & CPU Stability)
 
 ### 🛸 Fix de Amnesia en Telegram (Neural Link)

@@ -6,7 +6,7 @@ from core.logging_config import get_logger
 from routers.schemas import ApproveProposalRequest
 
 logger = get_logger("routers.evolution")
-router = APIRouter(tags=["evolution"])
+router = APIRouter(tags=["evolution"], dependencies=[Depends(get_current_admin)])
 
 @router.get("/nova/status")
 async def nova_evolution_status(current_user: User = Depends(get_current_user)):
@@ -75,8 +75,8 @@ async def nova_dataset_stats(current_user: User = Depends(get_current_user)):
     """Estadísticas detalladas del dataset acumulado."""
     return evolution_service.get_dataset_stats()
 
-@router.get("/nova/telemetry")
-async def nova_evolution_telemetry(current_user: User = Depends(get_current_user)):
+@router.get("/nova/telemetry", dependencies=[Depends(get_current_admin)])
+async def nova_evolution_telemetry(current_user: User = Depends(get_current_admin)):
     """Dashboard de inteligencia y salud evolutiva."""
     return evolution_service.get_evolution_telemetry()
 

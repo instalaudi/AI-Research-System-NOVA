@@ -1,42 +1,72 @@
-# Cómo Iniciar el Sistema
+# Cómo Iniciar el Sistema (v11.4.2 - Swarm Edition)
 
-## Opción 1: Usando venv local (RECOMENDADO)
+## Opción 1: Arranque Total Automatizado (RECOMENDADO)
 ```bash
 start_ai_system.bat
 ```
 
-**Ventajas:**
-- Aislado del resto del sistema
-- Fácil de reinstalar sin afectar otros proyectos
-- Automáticamente libera puertos 8000 y 3000
-- Script actualizado para instalar dependencias cada vez
-
-**Cómo funciona:**
-1. Libera automáticamente puertos 8000 (backend) y 3000 (frontend)
-2. Crea un venv local en `backend/venv/` (si no existe)
-3. **Siempre actualiza las dependencias** de `requirements.txt`
-4. Inicia backend en puerto 8000
-5. Inicia frontend en puerto 3000 (después de 3 segundos)
-6. Abre navegador automáticamente en http://localhost:3000
-
-## Opción 2: Usando Python global
-```bash
-start_ai_system_global.bat
-```
-
-**Ventajas:**
-- Más simple, sin necesidad de venv
-- Usa el Python global que ya tiene TODO instalado
-- Sin problemas de módulos faltantes
-- También libera puertos automáticamente
-
-**Cuándo usar:**
-- Si tienes problemas con el venv
-- Si prefieres evitar ambientes virtuales
+**Lo que NOVA hace por ti (v11.4.0):**
+1. **Limpieza Forense**: Libera automáticamente los puertos 8000, 3000 y los puertos de motores 11434, 11435, 11436.
+2. **Arranque del Enjambre**: Lanza el script `scripts/start_multi_engines.bat`.
+3. **Warm-up de Motores**: Espera **20 segundos** para asegurar que los motores de Chat, Dev y Audit estén en RAM antes de iniciar el cerebro.
+4. **Dashboard & Cerebro**: Inicia el Backend (8000), el Frontend (3000) y abre tu navegador listo para trabajar.
 
 ---
 
-## Si Aún Tienes Error "Puerto 8000 en uso"
+## Estructura de Motores Ollama (v11.4.0)
+
+Para el máximo rendimiento en tu Ryzen 7, NOVA distribuye la carga así:
+
+| Puerto | Agente / Función | Modelo Sugerido |
+|--------|------------------|-----------------|
+| **11434** | Chat & General | `qwen3:8b` |
+| **11435** | Developer (Código)| `qwen2.5-coder:7b` |
+| **11436** | Auditoría & Visión| `llava-llama3` |
+
+---
+
+### Crear un Proyecto
+
+1. En el chat, escribe una solicitud de proyecto:
+   ```
+   Crea una aplicación web de lista de tareas en React con Tailwind CSS
+   ```
+
+2. NOVA automáticamente:
+   - Genera el código usando el `DeveloperAgent`
+   - Valida con el `AuditorAgent`
+   - Empaqueta en un ZIP con el `ProjectManager`
+   - **Cambia automáticamente a la pestaña "Proyectos"**
+
+3. Ver tu proyecto en la lista:
+   - Nombre formateado automáticamente
+   - Tamaño en unidades legibles (KB, MB, etc.)
+   - Fecha de creación en tu zona horaria local
+   - Botón de descarga directa
+
+### Descargar un Proyecto
+
+1. Ve a la pestaña **"Proyectos"** en la interfaz
+2. Busca el proyecto en la lista
+3. Haz clic en el botón de **descargar** (icono Download)
+4. El archivo ZIP se guardará en tu carpeta de descargas
+
+### Acceder a Proyectos Anteriores
+
+- Todos tus proyectos siempre están disponibles en la pestaña "Proyectos"
+- No necesitas crear uno nuevo para acceder a los anteriores
+- Los proyectos se almacenan en `data/projects/` del servidor
+
+### Librería, Historial y Git (nuevo)
+
+- **Librería**: Busca snippets guardados por texto y reutilízalos directo en el chat.
+- **Historial**: Búsqueda semántica en código histórico con `/api/history/search`.
+- **Git**: Visualiza commits automáticos locales y abre diff por commit.
+- **Drawer de Diff**: Se cierra con botón, clic fuera (overlay) o tecla `Escape`.
+
+---
+
+## Si Aún Tienes Error \"Puerto 8000 en uso\"
 
 ### SOLUCIÓN 1: Ejecutar script de limpieza
 ```bash
@@ -48,13 +78,13 @@ Este script mata automáticamente cualquier proceso en puertos 8000 y 3000.
 ### SOLUCIÓN 2: Limpiar manualmente
 ```bash
 # En PowerShell (como Admin) o CMD
-netstat -ano | findstr ":8000"
+netstat -ano | findstr \":8000\"
 taskkill /PID <PID> /F
 ```
 
 ---
 
-## Si Aún Tienes Error de "slowapi"
+## Si Aún Tienes Error de \"slowapi\"
 
 ### SOLUCIÓN 1: El script lo instala automáticamente
 El script `start_ai_system.bat` ahora **SIEMPRE** ejecuta `pip install -r requirements.txt`, así que slowapi será instalado automáticamente.
@@ -78,6 +108,19 @@ cd backend
 venv\Scripts\activate
 pip list | findstr slowapi
 ```
+
+---
+
+## Novedades de v11.1.2
+
+✨ **Gestor de Activos + Git Local**
+- Interface moderna para gestionar proyectos generados
+- Cambio automático de pestaña cuando creas un proyecto
+- Metadatos completos (tamaño, fecha, nombre formateado)
+- Descarga flexible en lugar de automática
+- Librería de snippets reutilizables
+- Historial semántico de código
+- Historial de commits Git + visualización de diffs
 
 Debe mostrar: `slowapi 0.1.9`
 

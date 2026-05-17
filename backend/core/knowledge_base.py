@@ -110,6 +110,11 @@ class KnowledgeBase:
             # Update Graph in DB (Nodes & Links)
             self._update_graph_db(db, entry_data)
             
+            # v12.0.2: COMMIT ANTES de la indexación vectorial pesada.
+            # Esto libera el bloqueo de SQLite para que el chat pueda seguir escribiendo logs
+            # mientras generamos los embeddings.
+            db.commit()
+            
             # Semantic Indexing (Vector DB integration)
             from core.vector_db import vector_db
             try:
@@ -120,11 +125,9 @@ class KnowledgeBase:
                     "category": entry_data.category,
                     "url": entry_data.url
                 }
-                vector_db.index_article(str(entry_data.id), text_to_index, metadata)
+                await vector_db.index_article(str(entry_data.id), text_to_index, metadata)
             except Exception as ve:
                 print(f"[KnowledgeBase] Warning: Vector indexing failed: {ve}")
-
-            db.commit()
         except Exception as e:
             db.rollback()
             # FIX-CONCURRENCY: Si dos workers insertan el mismo título simultáneamente,
@@ -294,6 +297,65 @@ class KnowledgeBase:
                 "consensus": "alto" if count > 2 else "medio" if count > 0 else "bajo",
                 "unique_articles": count
             }
+        finally:
+            db.close()
+
+    async def search_enhanced(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        v13.8.0: Búsqueda Híbrida (Graph-RAG Bridge).
+        Combina similitud vectorial con expansión de grafo por vecindad.
+        """
+        # v13.8.0: 1. Búsqueda Vectorial Inicial
+        try:
+            from core.vector_db import vector_db
+            vector_results = await vector_db.search_similar(query, limit=limit)
+        except Exception as e:
+            print(f"[KnowledgeBase] Error en búsqueda vectorial: {e}")
+            vector_results = []
+            
+        entry_ids = [int(r["metadata"]["id"]) for r in vector_results if "metadata" in r and "id" in r["metadata"]]
+            
+        db = SessionLocal()
+        try:
+            # 2. Recuperar entradas base
+            entries = db.query(KnowledgeEntry).filter(KnowledgeEntry.id.in_(entry_ids)).all()
+            results = []
+            seen_ids = set(entry_ids)
+
+            # 3. Identificar Conceptos Clave para Expansión
+            concepts_to_expand = []
+            for e in entries:
+                if e.concepts:
+                    concepts_to_expand.extend([c.strip().lower() for c in e.concepts.split(",") if c.strip()])
+                results.append({
+                    "title": e.title,
+                    "content": e.content,
+                    "score": e.score,
+                    "source": "vector"
+                })
+
+            # 4. Expansión por Grafo
+            if concepts_to_expand:
+                from collections import Counter
+                top_concepts = [c for c, _ in Counter(concepts_to_expand).most_common(10)]
+                neighbor_links = db.query(GraphLink).filter(GraphLink.source.in_(top_concepts)).limit(10).all()
+                neighbor_ids = [l.target for l in neighbor_links]
+                if neighbor_ids:
+                    from sqlalchemy import or_
+                    conditions = [KnowledgeEntry.concepts.like(f"%{nid}%") for nid in neighbor_ids[:5]]
+                    neighbors = db.query(KnowledgeEntry).filter(or_(*conditions)).limit(3).all()
+                    
+                    for n in neighbors:
+                        if n.id not in seen_ids:
+                            results.append({
+                                "title": f"[Relacionado] {n.title}",
+                                "content": n.content,
+                                "score": n.score,
+                                "source": "graph_expansion"
+                            })
+                            seen_ids.add(n.id)
+
+            return results
         finally:
             db.close()
 

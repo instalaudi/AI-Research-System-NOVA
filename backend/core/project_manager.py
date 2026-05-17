@@ -3,8 +3,9 @@ import zipfile
 import tempfile
 import uuid
 from typing import Dict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from core.logging_config import get_logger
+from core.config import DATA_DIR
 
 logger = get_logger("core.project_manager")
 
@@ -15,8 +16,19 @@ class ProjectManager:
     """
     def __init__(self):
         # We will store zips temporarily in the backend/data/projects directory
-        self.projects_dir = Path("data/projects")
+        self.projects_dir = Path(DATA_DIR) / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+
+    def _sanitize_relative_path(self, relative_path: str) -> Path | None:
+        if not relative_path or not isinstance(relative_path, str):
+            return None
+        normalized_path = PurePosixPath(str(relative_path).replace("\\", "/"))
+        if normalized_path.is_absolute():
+            normalized_path = normalized_path.relative_to(normalized_path.root)
+        safe_parts = [part for part in normalized_path.parts if part not in ("", ".", "..")]
+        if not safe_parts:
+            return None
+        return Path(*safe_parts)
 
     def package_project(self, files: Dict[str, str], project_name: str = "nova_project") -> str:
         """
@@ -29,15 +41,38 @@ class ProjectManager:
         try:
             with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for relative_path, content in files.items():
-                    # Security: sanitize relative path to prevent directory traversal
-                    clean_path = str(Path(relative_path)).replace("..", "").strip("\\/")
-                    # Create the file within the zip archive
-                    zipf.writestr(clean_path, content)
-            
+                    clean_path = self._sanitize_relative_path(relative_path)
+                    if clean_path is None:
+                        continue
+                    zipf.writestr(str(clean_path), content)
+
             logger.info(f"Project successfully zipped at: {zip_filepath}")
             return str(zip_filepath)
         except Exception as e:
             logger.error(f"Failed to package project: {e}")
+            raise e
+
+    def save_project_snapshot(self, files: Dict[str, str], project_name: str = "nova_project") -> str:
+        """
+        Guarda snapshot de archivos generados en disco para versionado local.
+        """
+        snapshot_root = Path(DATA_DIR) / "project_snapshots"
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = snapshot_root / f"{project_name}_{uuid.uuid4().hex[:8]}"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            for relative_path, content in files.items():
+                clean_path = self._sanitize_relative_path(relative_path)
+                if clean_path is None:
+                    continue
+                target_file = snapshot_dir / clean_path
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_text(content, encoding="utf-8")
+            logger.info(f"Snapshot de proyecto guardado en: {snapshot_dir}")
+            return str(snapshot_dir)
+        except Exception as e:
+            logger.error(f"Failed to save project snapshot: {e}")
             raise e
 
 project_manager = ProjectManager()

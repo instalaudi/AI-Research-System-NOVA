@@ -16,7 +16,9 @@ from sqlalchemy import func, or_
 
 from agents.base_agent import BaseAgent
 # ... (rest of imports)
+from core.config import LLM_THINKER_MODEL, THINKER_USE_FAST_LANE
 from core.llm_client import llm_client
+from core.llm_gateway import llm_gateway
 from core.database import SessionLocal, KnowledgeNode, GraphLink, ResearchJob
 from core.logging_config import get_logger
 
@@ -28,6 +30,11 @@ class ThinkerAgent(BaseAgent):
     Su función no es buscar información externa, sino 'meditar' sobre lo que
     NOVA ya sabe para encontrar contradicciones, vacíos o nuevas ideas.
     """
+    
+    # v11.1: Cache para snapshot del grafo (optimización crítica)
+    _graph_snapshot_cache = None
+    _graph_snapshot_cache_time = 0.0
+    _graph_snapshot_cache_ttl = 300  # 5 minutos
 
     def __init__(self):
         super().__init__("Thinker")
@@ -89,38 +96,66 @@ class ThinkerAgent(BaseAgent):
 
 
     async def _get_graph_snapshot(self):
-        """v10.5.1: Obtiene una vista mixta (50 recientes + 50 alta centralidad)."""
+        """v10.5.1: Obtiene una vista mixta (50 recientes + 50 alta centralidad).
+        v11.1: Implementa caché de 5 minutos para evitar consultas SQL pesadas.
+        """
+        import time
+        
+        # Verificar caché
+        current_time = time.time()
+        if (self._graph_snapshot_cache is not None and 
+            (current_time - self._graph_snapshot_cache_time) < self._graph_snapshot_cache_ttl):
+            self._log_status(f"Usando snapshot cacheado ({(current_time - self._graph_snapshot_cache_time):.1f}s antiguo).")
+            return self._graph_snapshot_cache
+        
         db = SessionLocal()
         try:
+            start_time = datetime.datetime.utcnow()
             # 1. 50 Nodos más recientes
             recent_nodes = db.query(KnowledgeNode).order_by(KnowledgeNode.updated_at.desc()).limit(50).all()
-            
-            # 2. 50 Nodos con mayor grado (centralidad)
-            # Contamos enlaces donde el nodo sea source o target
-            node_ids_by_degree = db.query(
-                KnowledgeNode.id
-            ).join(
-                GraphLink, or_(KnowledgeNode.id == GraphLink.source, KnowledgeNode.id == GraphLink.target)
-            ).group_by(
-                KnowledgeNode.id
-            ).order_by(
-                func.count().desc()
-            ).limit(50).all()
-            
-            degree_node_ids = [n[0] for n in node_ids_by_degree]
+            recent_node_ids = [n.id for n in recent_nodes]
+
+            # 2. 50 Nodos con mayor grado (centralidad), excluyendo los recientes para maximizar diversidad
+            degree_node_ids_query = (
+                db.query(KnowledgeNode.id)
+                .join(
+                    GraphLink,
+                    or_(KnowledgeNode.id == GraphLink.source, KnowledgeNode.id == GraphLink.target)
+                )
+                .filter(~KnowledgeNode.id.in_(recent_node_ids))
+                .group_by(KnowledgeNode.id)
+                .order_by(func.count(GraphLink.id).desc())
+                .limit(50)
+            )
+            degree_node_ids = [row[0] for row in degree_node_ids_query.all()]
             degree_nodes = db.query(KnowledgeNode).filter(KnowledgeNode.id.in_(degree_node_ids)).all()
-            
+
             # Combinar (evitando duplicados)
-            all_nodes = {n.id: n for n in (recent_nodes + degree_nodes)}.values()
-            node_list = list(all_nodes)
+            combined_nodes = {n.id: n for n in (recent_nodes + degree_nodes)}
+            node_list = list(combined_nodes.values())
+            node_ids = list(combined_nodes.keys())
+
+            # 3. Obtener enlaces relacionados a estos nodos en dos consultas indexadas
+            source_links = db.query(GraphLink).filter(GraphLink.source.in_(node_ids)).limit(200).all()
+            target_links = db.query(GraphLink).filter(GraphLink.target.in_(node_ids)).limit(200).all()
+
+            seen_link_ids = set()
+            links = []
+            for link in source_links + target_links:
+                if link.id not in seen_link_ids:
+                    seen_link_ids.add(link.id)
+                    links.append(link)
+                if len(links) >= 200:
+                    break
+
+            elapsed = (datetime.datetime.utcnow() - start_time).total_seconds()
+            logger.debug(f"Thinker graph snapshot: {len(node_list)} nodes, {len(links)} links, {elapsed:.2f}s")
             
-            # 3. Obtener enlaces relacionados a estos nodos
-            node_ids = [n.id for n in node_list]
-            links = db.query(GraphLink).filter(
-                or_(GraphLink.source.in_(node_ids), GraphLink.target.in_(node_ids))
-            ).limit(200).all()
-            
-            return node_list, links
+            # Guardar en caché
+            result = (node_list, links)
+            self.__class__._graph_snapshot_cache = result
+            self.__class__._graph_snapshot_cache_time = current_time
+            return result
         except Exception as e:
             logger.error(f"Error en snapshot del Thinker: {e}")
             return [], []
@@ -176,10 +211,16 @@ Responde EXCLUSIVAMENTE en JSON (sin texto extra):
   "estimated_value": 8
 }}"""
 
-        response = await llm_client.chat(
+        thinker_priority = 0 if THINKER_USE_FAST_LANE and not llm_client.is_user_active() else 1
+        if thinker_priority == 0:
+            self._log_status("Ejecutando Thinker en carril rápido (usuario inactivo).")
+
+        response = await llm_gateway.chat(
             messages=[{"role": "user", "content": prompt}],
+            lane="realtime" if thinker_priority == 0 else "batch",
             temperature=0.7,   # Ligeramente menos aleatorio → respuestas más cortas y directas
-            priority=1         # Prioridad Agente
+            priority=thinker_priority,
+            model=LLM_THINKER_MODEL
         )
 
         try:
@@ -190,7 +231,19 @@ Responde EXCLUSIVAMENTE en JSON (sin texto extra):
             elif "```" in clean_json:
                 clean_json = clean_json.split("```")[1].split("```")[0]
                 
-            return json.loads(clean_json)
+            parsed = json.loads(clean_json)
+            required_fields = {
+                "title": lambda: "Exploración de " + (str(gaps[0]) if gaps else "Nuevas Tecnologías"),
+                "reasoning": lambda: "Detección de baja densidad de conexiones en el grafo técnico.",
+                "hypothesis": lambda: "¿Cómo podemos profundizar en el impacto de estas tecnologías?",
+                "target_topic": lambda: str(gaps[0]) if gaps else "Tendencias Tecnológicas 2026",
+                "priority": lambda: "media",
+                "estimated_value": lambda: 7
+            }
+            for field, fallback_fn in required_fields.items():
+                if field not in parsed or not parsed[field]:
+                    parsed[field] = fallback_fn()
+            return parsed
         except Exception as e:
             logger.error(f"Error parseando hipótesis del Thinker: {e}")
             return {

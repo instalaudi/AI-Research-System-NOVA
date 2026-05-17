@@ -8,7 +8,7 @@ export default function KnowledgeBrowser() {
     const [isLoading, setIsLoading] = useState(true);
     const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
     const [isUploading, setIsUploading] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+    const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error' | 'warning', message: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -37,14 +37,17 @@ export default function KnowledgeBrowser() {
     }, []);
 
     const handleBookUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const selectedFiles = e.target.files;
+        if (!selectedFiles || selectedFiles.length === 0) return;
 
         setIsUploading(true);
         setUploadStatus(null);
         
         const formData = new FormData();
-        formData.append("file", file);
+        // v11.4: Ahora soportamos el envío de múltiples archivos bajo la clave 'files'
+        for (let i = 0; i < selectedFiles.length; i++) {
+            formData.append("files", selectedFiles[i]);
+        }
 
         try {
             const response = await apiFetch("/library/upload", {
@@ -52,19 +55,39 @@ export default function KnowledgeBrowser() {
                 body: formData
             });
 
+            const data = await response.json();
+
             if (response.ok) {
-                const data = await response.json();
-                setUploadStatus({ type: 'success', message: data.message });
+                // El backend v11.4.2 retorna detalles por cada archivo
+                const detailsArray = Array.isArray(data?.details) ? data.details : [];
+                const successCount = detailsArray.filter((d: any) => d?.status === 'success').length;
+                const duplicateCount = detailsArray.filter((d: any) => d?.status === 'duplicate').length;
+                
+                if (duplicateCount > 0 && successCount === 0) {
+                    setUploadStatus({ 
+                        type: 'warning', 
+                        message: `Aviso: El contenido ya existe en la biblioteca.` 
+                    });
+                } else {
+                    setUploadStatus({ 
+                        type: 'success', 
+                        message: `Procesados ${successCount} de ${selectedFiles.length} archivos. (${duplicateCount} duplicados omitidos)` 
+                    });
+                }
                 if (fileInputRef.current) fileInputRef.current.value = "";
             } else {
-                const err = await response.json();
-                setUploadStatus({ type: 'error', message: err.detail || "Error al subir el libro" });
+                // Manejo robusto de errores de validación (FastAPI detail)
+                let msg = "Error al subir el libro";
+                if (data.detail) {
+                    msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail[0]?.msg || data.detail);
+                }
+                setUploadStatus({ type: 'error', message: msg });
             }
         } catch (error) {
             setUploadStatus({ type: 'error', message: "Error de conexión con el servidor" });
         } finally {
             setIsUploading(false);
-            setTimeout(() => setUploadStatus(null), 5000);
+            setTimeout(() => setUploadStatus(null), 8000);
         }
     };
 
@@ -94,9 +117,10 @@ export default function KnowledgeBrowser() {
                         ref={fileInputRef}
                         className="hidden" 
                         accept=".pdf,.epub,.txt"
+                        multiple
                         onChange={handleBookUpload}
-                        aria-label="Seleccionar archivo para cargar a la biblioteca"
-                        title="Seleccionar archivo de libro (.pdf, .epub, .txt)"
+                        aria-label="Seleccionar archivos para cargar a la biblioteca"
+                        title="Seleccionar archivos de libros (.pdf, .epub, .txt)"
                     />
                     <button
                         onClick={() => fileInputRef.current?.click()}
@@ -116,8 +140,12 @@ export default function KnowledgeBrowser() {
             </div>
 
             {uploadStatus && (
-                <div className={`p-4 rounded-2xl flex items-center gap-3 border animate-in fade-in slide-in-from-top-2 duration-300 ${uploadStatus.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
-                    {uploadStatus.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                <div className={`p-4 rounded-2xl flex items-center gap-3 border animate-in fade-in slide-in-from-top-2 duration-300 ${
+                    uploadStatus.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 
+                    uploadStatus.type === 'warning' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' :
+                    'bg-red-500/10 border-red-500/20 text-red-400'
+                }`}>
+                    {uploadStatus.type === 'success' ? <CheckCircle2 size={18} /> : uploadStatus.type === 'warning' ? <AlertCircle size={18} className="text-amber-500" /> : <AlertCircle size={18} />}
                     <span className="text-sm font-medium">{uploadStatus.message}</span>
                 </div>
             )}

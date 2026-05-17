@@ -18,9 +18,11 @@ async def backfill_knowledge_scores():
     or with default values, using the new specialized embedding model.
     """
     db = SessionLocal()
+    from agents.explorer import ExplorerAgent
+    agent = ExplorerAgent()
     try:
-        # Fetch entries without confidence_score or defaults (< 0.5)
-        entries = db.query(KnowledgeEntry).filter(KnowledgeEntry.confidence_score <= 0.8).all()
+        # Fetch entries with score less than 1.0 (to allow recalculation of unverified entries)
+        entries = db.query(KnowledgeEntry).filter(KnowledgeEntry.confidence_score < 1.0).all()
         print(f"[Backfill] Encontradas {len(entries)} entradas para re-evaluar.")
         
         for entry in entries:
@@ -30,10 +32,6 @@ async def backfill_knowledge_scores():
                 target_topic = entry.title
                 
             print(f"[Backfill] Evaluando: {entry.title} contra TEMA: {target_topic}...")
-            
-            # Use Explorer's logic (cosine similarity)
-            from agents.explorer import ExplorerAgent
-            agent = ExplorerAgent()
             
             topic_vec = await llm_client.get_embeddings(target_topic)
             content_to_score = f"{entry.title} {entry.content[:500]}"
@@ -47,14 +45,13 @@ async def backfill_knowledge_scores():
             else:
                 print(f"  -> Fallo al obtener embeddings para {entry.title}")
             
-            await agent.close()
-            
         db.commit()
         print("[Backfill] Proceso completado exitosamente.")
     except Exception as e:
         print(f"[Backfill] Error: {e}")
         db.rollback()
     finally:
+        await agent.close()
         db.close()
 
 if __name__ == "__main__":

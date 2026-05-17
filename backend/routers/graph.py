@@ -6,18 +6,14 @@
 ╚══════════════════════════════════════════════════════════════╝
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from core.graph_health import analyze_graph_health
-
-from fastapi import APIRouter, Query, Depends
-from fastapi.responses import JSONResponse
-from core.graph_health import analyze_graph_health
-from core.auth import get_current_admin
+from core.auth import get_current_user, get_current_admin
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
-@router.get("/health", summary="Anlisis de Salud Estructural del Grafo")
+@router.get("/health", summary="Anlisis de Salud Estructural del Grafo", dependencies=[Depends(get_current_user)])
 def get_graph_health():
     """
     Fase 3.1: Devuelve un informe pasivo determinista usando NetworkX.

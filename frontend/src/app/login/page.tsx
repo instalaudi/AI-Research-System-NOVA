@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { Activity, Lock, User as UserIcon, LogIn, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { BASE_URL } from "@/lib/api";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -22,7 +23,7 @@ export default function LoginPage() {
       formData.append("username", username);
       formData.append("password", password);
 
-      const response = await fetch("http://localhost:8000/api/token", {
+      const response = await fetch(`${BASE_URL}/token`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
@@ -30,14 +31,22 @@ export default function LoginPage() {
 
       if (response.ok) {
         const data = await response.json();
-        // Decode token to get admin status or just trust the response flag if we added it
-        // For simplicity, we added "admin" to the token payload, but we can also return it in the json
-        // Actually, my login endpoint in main.py returns just the token.
-        // Wait, I updated create_access_token call but the response model is just Token.
-        // Let's decode it or assume the backend needs to return it.
-        // I'll update the backend to return basic user info too or just decode here.
-        // Better: update backend to return {access_token, token_type, is_admin}
-        login(data.access_token, username, data.is_admin || false);
+        
+        // Decodificación ultra-robusta del JWT para extraer el rol admin si no viene en el body
+        let isAdmin = data.is_admin || false;
+        try {
+          const payloadPart = data.access_token.split(".")[1];
+          if (payloadPart) {
+            const decodedPayload = JSON.parse(atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/")));
+            if (decodedPayload && typeof decodedPayload.admin === 'boolean') {
+              isAdmin = decodedPayload.admin;
+            }
+          }
+        } catch (jwtError) {
+          console.error("JWT decode error:", jwtError);
+        }
+
+        login(data.access_token, username, isAdmin);
       } else {
         const err = await response.json();
         setError(err.detail || "Credenciales inválidas");
@@ -62,8 +71,8 @@ export default function LoginPage() {
             <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/20 mb-6">
               <Activity className="text-white w-8 h-8" />
             </div>
-            <h1 suppressHydrationWarning className="text-3xl font-bold text-white tracking-tight">Bienvenido</h1>
-            <p suppressHydrationWarning className="text-gray-500 mt-2 text-sm">Inicia sesión en tu terminal de investigación</p>
+            <h1 className="text-3xl font-bold text-white tracking-tight">Bienvenido</h1>
+            <p className="text-gray-500 mt-2 text-sm">Inicia sesión en tu terminal de investigación</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -118,7 +127,7 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p suppressHydrationWarning className="text-center text-gray-500 text-sm mt-8">
+          <p className="text-center text-gray-500 text-sm mt-8">
             ¿No tienes cuenta?{" "}
             <Link href="/register" className="text-blue-400 hover:text-blue-300 font-semibold transition-colors">
               Regístrate aquí

@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOVA Control Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep:    #05080f;
+  --bg-base:    #090d18;
+  --bg-card:    #0d1421;
+  --bg-hover:   #111927;
+  --bg-input:   #0b1320;
+  --border:     #1a2840;
+  --border-hi:  #243654;
+  --accent:     #00c8ff;
+  --accent-dim: #0090b8;
+  --green:      #00e676;
+  --green-dim:  #00994d;
+  --red:        #ff3355;
+  --red-dim:    #aa1133;
+  --amber:      #ffb300;
+  --amber-dim:  #996b00;
+  --text-hi:    #e2eaf6;
+  --text-mid:   #8ba0bc;
+  --text-lo:    #3d5270;
+  --font-ui:    'Rajdhani', sans-serif;
+  --font-head:  'Orbitron', sans-serif;
+  --font-mono:  'JetBrains Mono', monospace;
+  --radius:     6px;
+  --glow-accent: 0 0 12px rgba(0,200,255,.25);
+  --glow-green:  0 0 10px rgba(0,230,118,.3);
+  --glow-red:    0 0 10px rgba(255,51,85,.3);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg-deep);
+  color: var(--text-hi);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  overflow: hidden;
+  /* Firefox Scrollbar Support */
+  @supports (scrollbar-width: thin) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hi) transparent;
+  }
+}
+
+/* Subtle grid background */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(0,200,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,200,255,.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── LAYOUT ───────────────────────────────────────────────────────────── */
+.app {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-rows: 52px 1fr;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+/* ── HEADER ───────────────────────────────────────────────────────────── */
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 20px;
+  background: rgba(5,8,15,.9);
+  border-bottom: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.logo {
+  font-family: var(--font-head);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--text-hi);
+}
+.logo span { color: var(--accent); }
+
+.logo-sep {
+  width: 1px; height: 20px;
+  background: var(--border-hi);
+  margin: 0 4px;
+}
+
+.topbar-label {
+  font-family: var(--font-head);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-mid);
+  text-transform: uppercase;
+}
+
+.spacer { flex: 1; }
+
+.sys-stat {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+}
+.sys-stat strong { color: var(--text-hi); }
+
+.stat-bar-wrap {
+  width: 60px; height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.stat-bar { width: 0%; height: 100%; background: var(--accent); border-radius: 2px; transition: width .5s; }
+.stat-bar.warn { background: var(--amber); }
+.stat-bar.crit { background: var(--red); }
+
+.version-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 1px;
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: 3px;
+}
+
+/* ── SIDEBAR ──────────────────────────────────────────────────────────── */
+.sidebar {
+  background: var(--bg-base);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-section {
+  padding: 14px 16px 8px;
+}
+
+.section-label {
+  font-family: var(--font-head);
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* ── SERVICE CARD ─────────────────────────────────────────────────────── */
+.svc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-bottom: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  position: relative;
+}
+.svc-card:hover { background: var(--bg-hover); border-color: var(--border-hi); }
+.svc-card.active-log { border-color: var(--accent); }
+
+.svc-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-lo);
+  transition: background .3s, box-shadow .3s;
+}
+.svc-dot.running  { background: var(--green);  box-shadow: var(--glow-green); }
+.svc-dot.starting { background: var(--amber);  animation: pulse-amber 1s infinite; }
+.svc-dot.error    { background: var(--red);    box-shadow: var(--glow-red); }
+.svc-dot.stopped  { background: var(--text-lo); }
+
+@keyframes pulse-amber {
+  0%,100% { opacity: 1; }
+  50%      { opacity: .35; }
+}
+
+.svc-info { flex: 1; min-width: 0; }
+.svc-name {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-hi);
+  letter-spacing: .5px;
+}
+.svc-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  margin-top: 1px;
+}
+
+.svc-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.svc-btn {
+  width: 22px; height: 22px;
+  border: 1px solid var(--border-hi);
+  border-radius: 3px;
+  background: var(--bg-deep);
+  color: var(--text-mid);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all .15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.svc-btn:hover { border-color: var(--accent); color: var(--accent); }
+.svc-btn.stop:hover  { border-color: var(--red); color: var(--red); }
+.svc-btn.start:hover { border-color: var(--green); color: var(--green); }
+
+/* ── GLOBAL ACTION BUTTONS ────────────────────────────────────────────── */
+.global-actions {
+  padding: 12px 16px;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.big-btn {
+  width: 100%;
+  padding: 9px 14px;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-hi);
+  font-family: var(--font-head);
+  font-size: 9px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: all .2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.big-btn .icon { font-size: 12px; }
+.big-btn.launch {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.big-btn.launch:hover {
+  background: rgba(0,200,255,.1);
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+.big-btn.kill {
+  border-color: var(--red-dim);
+  color: var(--red);
+}
+.big-btn.kill:hover {
+  background: rgba(255,51,85,.08);
+  border-color: var(--red);
+  box-shadow: var(--glow-red);
+}
+
+/* ── MAIN PANEL ───────────────────────────────────────────────────────── */
+.main-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+/* ── TABS ─────────────────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 20px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  padding: 14px 20px 12px;
+  font-family: var(--font-head);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-lo);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all .2s;
+  text-transform: uppercase;
+}
+.tab-btn:hover { color: var(--text-mid); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-content { display: none; flex: 1; overflow: hidden; }
+.tab-content.active { display: flex; flex-direction: column; }
+
+/* ── LOGS TAB ─────────────────────────────────────────────────────────── */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.log-svc-tab {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  background: none;
+  cursor: pointer;
+  transition: all .15s;
+}
+.log-svc-tab:hover { border-color: var(--border-hi); color: var(--text-hi); }
+.log-svc-tab.active {
+  background: rgba(0,200,255,.1);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.log-spacer { flex: 1; }
+
+.log-ctrl-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  background: none;
+  cursor: pointer;
+  transition: all .15s;
+}
+.log-ctrl-btn:hover { border-color: var(--border-hi); color: var(--text-hi); }
+
+.log-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: #7fa8d0;
+  background: var(--bg-deep);
+}
+
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line.err  { color: #ff6080; }
+.log-line.warn { color: #ffcc55; }
+.log-line.ok   { color: #55dd88; }
+.log-line.meta { color: #3d5270; }
+.log-line.info { color: #5b8fbf; }
+
+/* Scrollbar Styling */
+.log-area::-webkit-scrollbar { width: 5px; }
+.log-area::-webkit-scrollbar-track { background: transparent; }
+.log-area::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+/* Firefox Scrollbar */
+@supports (scrollbar-width: thin) {
+  .log-area {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hi) transparent;
+  }
+}
+
+/* ── CONFIG TAB ───────────────────────────────────────────────────────── */
+.config-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-content: start;
+}
+
+.config-area::-webkit-scrollbar { width: 5px; }
+.config-area::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+@supports (scrollbar-width: thin) {
+  .config-area {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hi) transparent;
+  }
+}
+
+.cfg-block {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  /* overflow: visible to allow model picker to show up */
+  position: relative; 
+}
+.cfg-block.full { grid-column: 1 / -1; }
+
+.cfg-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(0,0,0,.2);
+  border-bottom: 1px solid var(--border);
+}
+.cfg-block-title {
+  font-family: var(--font-head);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+
+.cfg-save-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  background: rgba(0,200,255,.08);
+  color: var(--accent);
+  font-family: var(--font-head);
+  font-size: 8px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.cfg-save-btn:hover {
+  background: rgba(0,200,255,.18);
+  box-shadow: var(--glow-accent);
+}
+.cfg-save-btn.saved {
+  border-color: var(--green-dim);
+  background: rgba(0,230,118,.08);
+  color: var(--green);
+}
+
+.cfg-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.cfg-row { display: flex; flex-direction: column; gap: 4px; }
+.cfg-row.horizontal { flex-direction: row; align-items: center; justify-content: space-between; }
+
+.cfg-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  letter-spacing: .5px;
+}
+
+.cfg-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-hi);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 6px 10px;
+  width: 100%;
+  transition: border-color .15s;
+  outline: none;
+}
+.cfg-input:focus { border-color: var(--accent); }
+
+.input-with-btn { display: flex; gap: 4px; position: relative; }
+.pick-btn {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 14px;
+  transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center;
+}
+.pick-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+
+/* Custom Picker */
+.picker-overlay {
+  position: absolute;
+  top: calc(100% + 5px); left: 0; right: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  z-index: 9999;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+  display: none;
+}
+.picker-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  border-bottom: 1px solid var(--border);
+  transition: background .2s, color .2s;
+}
+.picker-item:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+.picker-item:last-child { border-bottom: none; }
+
+.cfg-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-hi);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  width: 100%;
+  outline: none;
+  cursor: pointer;
+}
+.cfg-select:focus { border-color: var(--accent); }
+
+.cfg-toggle-wrap { display: flex; align-items: center; gap: 8px; }
+.toggle {
+  position: relative;
+  width: 36px; height: 20px;
+  flex-shrink: 0;
+}
+.toggle input { display: none; }
+.toggle-track {
+  position: absolute; inset: 0;
+  background: var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .2s;
+}
+.toggle input:checked + .toggle-track { background: var(--accent-dim); }
+.toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 14px; height: 14px;
+  background: var(--text-mid);
+  border-radius: 50%;
+  transition: transform .2s, background .2s;
+  pointer-events: none;
+}
+.toggle input:checked ~ .toggle-thumb {
+  transform: translateX(16px);
+  background: var(--accent);
+}
+
+.range-wrap { display: flex; align-items: center; gap: 10px; }
+.cfg-range {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.range-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ── MONITOR TAB ──────────────────────────────────────────────────────── */
+.monitor-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-content: start;
+  @supports (scrollbar-width: thin) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hi) transparent;
+  }
+}
+
+.mon-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.mon-card.full { grid-column: 1 / -1; }
+
+.mon-title {
+  font-family: var(--font-head);
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.mon-big {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 300;
+  color: var(--text-hi);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.mon-big span { font-size: 14px; color: var(--text-mid); }
+
+.mon-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mid);
+}
+
+.mon-bar-bg {
+  width: 100%;
+  height: 5px;
+  background: var(--border);
+  border-radius: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.mon-bar-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width .5s;
+}
+.mon-bar-fill.warn { background: var(--amber); }
+.mon-bar-fill.crit { background: var(--red); }
+
+.svc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.svc-table th {
+  text-align: left;
+  padding: 4px 8px;
+  color: var(--text-lo);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-head);
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+.svc-table td {
+  padding: 7px 8px;
+  color: var(--text-mid);
+  border-bottom: 1px solid rgba(26,40,64,.4);
+}
+.svc-table td:first-child { color: var(--text-hi); }
+
+.pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: var(--font-head);
+  letter-spacing: 1px;
+}
+.pill.running  { background: rgba(0,230,118,.12); color: var(--green); border: 1px solid rgba(0,230,118,.25); }
+.pill.stopped  { background: rgba(61,82,112,.15);  color: var(--text-lo); border: 1px solid var(--border); }
+.pill.starting { background: rgba(255,179,0,.12); color: var(--amber); border: 1px solid rgba(255,179,0,.25); }
+.pill.error    { background: rgba(255,51,85,.12);  color: var(--red); border: 1px solid rgba(255,51,85,.25); }
+
+/* ── TOAST ────────────────────────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 20px; right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+}
+.toast {
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-hi);
+  animation: slide-in .2s ease;
+  max-width: 300px;
+}
+.toast.ok   { border-color: var(--green-dim); color: var(--green); }
+.toast.err  { border-color: var(--red-dim); color: var(--red); }
+.toast.info { border-color: var(--accent-dim); color: var(--accent); }
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── TOPBAR ─────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <span class="logo">NOVA<span>·CC</span></span>
+    <div class="logo-sep"></div>
+    <span class="topbar-label">Control Center</span>
+    <div class="spacer"></div>
+
+    <div class="sys-stat">
+      <span>CPU</span>
+      <div class="stat-bar-wrap"><div class="stat-bar" id="cpu-bar"></div></div>
+      <strong id="cpu-val">—</strong>
+    </div>
+    <div class="sys-stat ml-12">
+      <span>RAM</span>
+      <div class="stat-bar-wrap"><div class="stat-bar" id="ram-bar"></div></div>
+      <strong id="ram-val">—</strong>
+    </div>
+
+    <div class="version-badge ml-16">v11.9.2</div>
+  </header>
+
+  <!-- ── SIDEBAR ───────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="section-label">Motores LLM</div>
+      <div id="card-ollama_1"></div>
+      <div id="card-ollama_2"></div>
+      <div id="card-ollama_3"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Aplicación</div>
+      <div id="card-backend"></div>
+      <div id="card-frontend"></div>
+    </div>
+
+    <div class="global-actions">
+      <button class="big-btn launch" onclick="startAll()">
+        <span class="icon">▶</span> INICIAR SISTEMA
+      </button>
+      <button class="big-btn kill" onclick="stopAll()">
+        <span class="icon">■</span> DETENER TODO
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── MAIN PANEL ─────────────────────────────────────────────────── -->
+  <main class="main-panel">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('logs')">Logs</button>
+      <button class="tab-btn" onclick="switchTab('config')">Configuración</button>
+      <button class="tab-btn" onclick="switchTab('monitor')">Monitor</button>
+    </div>
+
+    <!-- ── LOGS TAB ────────────────────────────────────────── -->
+    <div id="tab-logs" class="tab-content active">
+      <div class="log-toolbar">
+        <button class="log-svc-tab active" onclick="selectLogSvc('backend',this)">Backend</button>
+        <button class="log-svc-tab" onclick="selectLogSvc('frontend',this)">Frontend</button>
+        <button class="log-svc-tab" onclick="selectLogSvc('ollama_1',this)">Ollama 1</button>
+        <button class="log-svc-tab" onclick="selectLogSvc('ollama_2',this)">Ollama 2</button>
+        <button class="log-svc-tab" onclick="selectLogSvc('ollama_3',this)">Ollama 3</button>
+        <div class="log-spacer"></div>
+        <button class="log-ctrl-btn" onclick="toggleAutoScroll()" id="autoscroll-btn">Auto ↓ ON</button>
+        <button class="log-ctrl-btn" onclick="serverClearLog()">Limpiar</button>
+      </div>
+      <div class="log-area" id="log-area"></div>
+    </div>
+
+    <!-- ── CONFIG TAB ──────────────────────────────────────── -->
+    <div id="tab-config" class="tab-content">
+      <div class="config-area" id="config-area">
+        <div class="cfg-block">
+          <div class="cfg-block-header">
+            <span class="cfg-block-title">Modelos LLM</span>
+            <button class="cfg-save-btn" onclick="saveSection('models',this)">GUARDAR</button>
+          </div>
+          <div class="cfg-body">
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_FAST_MODEL</span>
+              <div class="input-with-btn">
+                <input class="cfg-input" id="cfg-LLM_FAST_MODEL" placeholder="qwen2.5:1.5b">
+                <button class="pick-btn" onclick="togglePicker('cfg-LLM_FAST_MODEL')" title="Seleccionar modelo">📋</button>
+                <div id="picker-cfg-LLM_FAST_MODEL" class="picker-overlay"></div>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_MODEL_NAME</span>
+              <div class="input-with-btn">
+                <input class="cfg-input" id="cfg-LLM_MODEL_NAME" placeholder="qwen2.5:1.5b">
+                <button class="pick-btn" onclick="togglePicker('cfg-LLM_MODEL_NAME')" title="Seleccionar modelo">📋</button>
+                <div id="picker-cfg-LLM_MODEL_NAME" class="picker-overlay"></div>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_CODER_MODEL</span>
+              <div class="input-with-btn">
+                <input class="cfg-input" id="cfg-LLM_CODER_MODEL" placeholder="qwen2.5:1.5b">
+                <button class="pick-btn" onclick="togglePicker('cfg-LLM_CODER_MODEL')" title="Seleccionar modelo">📋</button>
+                <div id="picker-cfg-LLM_CODER_MODEL" class="picker-overlay"></div>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_EMBED_MODEL</span>
+              <input class="cfg-input" id="cfg-LLM_EMBED_MODEL" placeholder="all-MiniLM-L6-v2">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">OLLAMA_URL</span>
+              <input class="cfg-input" id="cfg-OLLAMA_URL" placeholder="http://localhost:11434/api/chat">
+            </div>
+          </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-block-header">
+            <span class="cfg-block-title">Motores &amp; Arranque</span>
+            <button class="cfg-save-btn" onclick="saveSection('services',this)">GUARDAR</button>
+          </div>
+          <div class="cfg-body">
+            <div class="cfg-row">
+              <span class="cfg-label">Número de motores Ollama</span>
+              <select class="cfg-select" id="cfg-num_ollama_engines" title="Número de motores Ollama para ejecución paralela">
+                <option value="1">1 motor (puerto 11434)</option>
+                <option value="2">2 motores (+11435)</option>
+                <option value="3" selected>3 motores (+11436)</option>
+              </select>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">Warmup delay: <span id="warmup-lbl">20</span>s</span>
+              <div class="range-wrap">
+                <input type="range" class="cfg-range" id="cfg-warmup_delay" title="Tiempo de espera para calentamiento de Ollama"
+                       min="5" max="60" value="20"
+                       oninput="document.getElementById('warmup-lbl').textContent=this.value">
+                <span class="range-val" id="warmup-display">20s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-block-header">
+            <span class="cfg-block-title">Rendimiento</span>
+            <button class="cfg-save-btn" onclick="saveSection('performance',this)">GUARDAR</button>
+          </div>
+          <div class="cfg-body">
+            <div class="cfg-row">
+              <span class="cfg-label">COGNITIVE_MODE</span>
+              <select class="cfg-select" id="cfg-COGNITIVE_MODE" title="Modo cognitivo del sistema">
+                <option value="turbo">turbo</option>
+                <option value="balanced">balanced</option>
+                <option value="safe">safe</option>
+              </select>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">RATE_LIMIT_REQUESTS</span>
+              <input class="cfg-input" id="cfg-RATE_LIMIT_REQUESTS" type="number" min="1" placeholder="30">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">RATE_LIMIT_WINDOW (seg)</span>
+              <input class="cfg-input" id="cfg-RATE_LIMIT_WINDOW" type="number" min="1" placeholder="60">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">CHAT_HISTORY_MAX_SIZE</span>
+              <input class="cfg-input" id="cfg-CHAT_HISTORY_MAX_SIZE" type="number" min="1" placeholder="20">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">MAX_QUERY_LENGTH</span>
+              <input class="cfg-input" id="cfg-MAX_QUERY_LENGTH" type="number" min="100" placeholder="2000">
+            </div>
+          </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-block-header">
+            <span class="cfg-block-title">Funcionalidades</span>
+            <button class="cfg-save-btn" onclick="saveSection('features',this)">GUARDAR</button>
+          </div>
+          <div class="cfg-body">
+            <div class="cfg-row horizontal">
+              <span class="cfg-label">DISTILLATION</span>
+              <div class="cfg-toggle-wrap">
+                <label class="toggle">
+                  <input type="checkbox" id="cfg-DISTILLATION" title="Activar destilación de conocimiento" checked>
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+            </div>
+            <div class="cfg-row horizontal">
+              <span class="cfg-label">EVOLUTION</span>
+              <div class="cfg-toggle-wrap">
+                <label class="toggle">
+                  <input type="checkbox" id="cfg-EVOLUTION" title="Activar evolución autónoma" checked>
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+            </div>
+            <div class="cfg-row horizontal">
+              <span class="cfg-label">PROACTIVE</span>
+              <div class="cfg-toggle-wrap">
+                <label class="toggle">
+                  <input type="checkbox" id="cfg-PROACTIVE" title="Activar modo proactivo" checked>
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">TELEGRAM_MODE</span>
+              <select class="cfg-select" id="cfg-TELEGRAM_MODE" title="Modo de conexión con Telegram">
+                <option value="polling">polling</option>
+                <option value="webhook">webhook</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MONITOR TAB ─────────────────────────────────────── -->
+    <div id="tab-monitor" class="tab-content">
+      <div class="monitor-area">
+        <div class="mon-card">
+          <div class="mon-title">CPU</div>
+          <div class="mon-big" id="mon-cpu">—<span>%</span></div>
+          <div class="mon-sub">Uso actual</div>
+          <div class="mon-bar-bg"><div class="mon-bar-fill" id="mon-cpu-bar"></div></div>
+        </div>
+        <div class="mon-card">
+          <div class="mon-title">RAM Usada</div>
+          <div class="mon-big" id="mon-ram">—<span>GB</span></div>
+          <div class="mon-sub" id="mon-ram-sub">de — GB total</div>
+          <div class="mon-bar-bg"><div class="mon-bar-fill" id="mon-ram-bar"></div></div>
+        </div>
+        <div class="mon-card">
+          <div class="mon-title">Servicios Activos</div>
+          <div class="mon-big" id="mon-active">—<span>/5</span></div>
+          <div class="mon-sub" id="mon-active-sub">procesos en ejecución</div>
+        </div>
+        <div class="mon-card full">
+          <div class="mon-title">Estado de Servicios</div>
+          <table class="svc-table">
+            <thead>
+              <tr>
+                <th>Servicio</th>
+                <th>Estado</th>
+                <th>Puerto</th>
+                <th>PID</th>
+              </tr>
+            </thead>
+            <tbody id="mon-svc-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+const API = 'http://localhost:9999/api';
+// FIX C-2 (Auditoría v11.9.18): API Key para endpoints mutantes
+const CC_API_KEY = 'nova-cc-cambiar-en-produccion';
+const AUTH_HEADERS = { 'X-CC-API-Key': CC_API_KEY };
+
+// ── State ────────────────────────────────────────────────────────────
+let currentLogSvc = 'backend';
+let autoScroll    = true;
+let logEventSource = null;
+let logBuffer     = [];
+const MAX_LOG_LINES = 500;
+
+const SVC_LABELS = {
+  backend:  'Backend',
+  frontend: 'Frontend',
+  ollama_1: 'Ollama 1',
+  ollama_2: 'Ollama 2',
+  ollama_3: 'Ollama 3',
+};
+
+// ── Toast ─────────────────────────────────────────────────────────────
+function toast(msg, type='info', ms=2800) {
+  const c = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+// ── Service Cards ─────────────────────────────────────────────────────
+function renderCard(id, info) {
+  const el = document.getElementById(`card-${id}`);
+  if (!el) return;
+  const { status, port, pid } = info;
+  const isRunning = status === 'running';
+  const isStopped = status === 'stopped';
+
+  el.innerHTML = `
+    <div class="svc-card ${currentLogSvc === id ? 'active-log' : ''}"
+         onclick="selectLogSvc('${id}', null)">
+      <div class="svc-dot ${status}"></div>
+      <div class="svc-info">
+        <div class="svc-name">${SVC_LABELS[id]}</div>
+        <div class="svc-meta">:${port}${pid ? ' · PID '+pid : ''}</div>
+      </div>
+      <div class="svc-actions" onclick="event.stopPropagation()">
+        <button class="svc-btn start" title="Iniciar"
+          onclick="svcAction('${id}','start')" ${isRunning?'disabled':''}>▶</button>
+        <button class="svc-btn" title="Reiniciar"
+          onclick="svcAction('${id}','restart')">↺</button>
+        <button class="svc-btn stop" title="Detener"
+          onclick="svcAction('${id}','stop')" ${isStopped?'disabled':''}>■</button>
+      </div>
+    </div>`;
+}
+
+// ── Status Polling ────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const res = await fetch(`${API}/status`, { headers: AUTH_HEADERS });
+
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Update cards
+    ['backend','frontend','ollama_1','ollama_2','ollama_3'].forEach(id => {
+      if (data[id]) renderCard(id, data[id]);
+    });
+
+    // Update topbar stats
+    const sys = data._system || {};
+    const ramPct = sys.ram_percent || 0;
+    const cpuPct = sys.cpu_percent || 0;
+
+    document.getElementById('cpu-val').textContent = `${cpuPct.toFixed(0)}%`;
+    document.getElementById('ram-val').textContent = `${sys.ram_used_gb}/${sys.ram_total_gb}GB`;
+
+    const cpuBar = document.getElementById('cpu-bar');
+    cpuBar.style.width = `${cpuPct}%`;
+    cpuBar.className = `stat-bar${cpuPct>85?' crit':cpuPct>65?' warn':''}`;
+
+    const ramBar = document.getElementById('ram-bar');
+    ramBar.style.width = `${ramPct}%`;
+    ramBar.className = `stat-bar${ramPct>85?' crit':ramPct>65?' warn':''}`;
+
+    // Monitor tab
+    document.getElementById('mon-cpu').innerHTML = `${cpuPct.toFixed(0)}<span>%</span>`;
+    document.getElementById('mon-ram').innerHTML = `${sys.ram_used_gb}<span>GB</span>`;
+    document.getElementById('mon-ram-sub').textContent = `de ${sys.ram_total_gb} GB total`;
+
+    const monCpuBar = document.getElementById('mon-cpu-bar');
+    monCpuBar.style.width = `${cpuPct}%`;
+    monCpuBar.className = `mon-bar-fill${cpuPct>85?' crit':cpuPct>65?' warn':''}`;
+
+    const monRamBar = document.getElementById('mon-ram-bar');
+    monRamBar.style.width = `${ramPct}%`;
+    monRamBar.className = `mon-bar-fill${ramPct>85?' crit':ramPct>65?' warn':''}`;
+
+    // Active count
+    const active = ['backend','frontend','ollama_1','ollama_2','ollama_3']
+      .filter(id => data[id]?.status === 'running').length;
+    document.getElementById('mon-active').innerHTML = `${active}<span>/5</span>`;
+    document.getElementById('mon-active-sub').textContent = `${active === 5 ? 'sistema completo' : active + ' proceso(s) activos'}`;
+
+    // Monitor table
+    const tbody = document.getElementById('mon-svc-table');
+    tbody.innerHTML = ['backend','frontend','ollama_1','ollama_2','ollama_3'].map(id => {
+      const s = data[id] || {};
+      return `<tr>
+        <td>${SVC_LABELS[id]}</td>
+        <td><span class="pill ${s.status||'stopped'}">${(s.status||'stopped').toUpperCase()}</span></td>
+        <td>:${s.port||'—'}</td>
+        <td>${s.pid || '—'}</td>
+      </tr>`;
+    }).join('');
+
+  } catch(e) {
+    // Launcher not reachable
+  }
+}
+
+// ── Service Actions ───────────────────────────────────────────────────
+async function svcAction(id, action) {
+  try {
+    await fetch(`${API}/service/${id}/${action}`, {method:'POST', headers: AUTH_HEADERS});
+    const msgs = {start:'▶ Iniciando...', stop:'■ Deteniendo...', restart:'↺ Reiniciando...'};
+    toast(`${SVC_LABELS[id]}: ${msgs[action]}`, 'info');
+    if (action === 'start') selectLogSvc(id, null);
+  } catch(e) {
+    toast(`Error: ${e.message}`, 'err');
+  }
+}
+
+async function startAll() {
+  try {
+    await fetch(`${API}/services/start-all`, {method:'POST', headers: AUTH_HEADERS});
+    toast('▶ Iniciando sistema completo...', 'info', 4000);
+    selectLogSvc('backend', null);
+  } catch(e) { toast(`Error: ${e.message}`, 'err'); }
+}
+
+async function stopAll() {
+  // v13.6.2: Removed confirm to improve UX and agent compatibility
+  toast('Deteniendo todo el sistema...', 'warn');
+
+  try {
+    await fetch(`${API}/services/stop-all`, {method:'POST', headers: AUTH_HEADERS});
+    toast('■ Todos los servicios detenidos.', 'ok');
+  } catch(e) { toast(`Error: ${e.message}`, 'err'); }
+}
+
+// ── Log Viewer ────────────────────────────────────────────────────────
+function classifyLine(line) {
+  const l = line.toLowerCase();
+  if (/error|exception|traceback|critical|failed|✗/.test(l)) return 'err';
+  if (/warn|warning|⚠/.test(l))  return 'warn';
+  if (/started|running|ok|ready|✅|▶/.test(l)) return 'ok';
+  if (/\[launcher\]/.test(l))    return 'meta';
+  if (/info|debug/.test(l))      return 'info';
+  return '';
+}
+
+function appendLogLines(lines) {
+  const area = document.getElementById('log-area');
+  lines.forEach(line => {
+    logBuffer.push(line);
+    const div = document.createElement('div');
+    div.className = `log-line ${classifyLine(line)}`;
+    div.textContent = line;
+    area.appendChild(div);
+  });
+
+  // Trim old lines
+  while (logBuffer.length > MAX_LOG_LINES) {
+    logBuffer.shift();
+    if (area.firstChild) area.removeChild(area.firstChild);
+  }
+
+  if (autoScroll) area.scrollTop = area.scrollHeight;
+}
+
+function uiClearLog() {
+  logBuffer = [];
+  const area = document.getElementById('log-area');
+  if (area) area.innerHTML = '';
+}
+
+async function serverClearLog() {
+  // v13.6.2: Removed confirm to improve UX and agent compatibility
+  uiClearLog();
+  if (currentLogSvc) {
+
+    try {
+      await fetch(`${API}/logs/${currentLogSvc}`, {method: 'DELETE', headers: AUTH_HEADERS});
+      toast('Logs borrados en el servidor', 'ok');
+    } catch(e) { console.error("Error clearing server logs", e); }
+  }
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  document.getElementById('autoscroll-btn').textContent = `Auto ↓ ${autoScroll?'ON':'OFF'}`;
+}
+
+async function startLogStream(svc) {
+  if (logEventSource) { logEventSource.close(); logEventSource = null; }
+  uiClearLog();
+  
+  try {
+    // Obtener un token temporal de corta duración para EventSource
+    const res = await fetch(`${API}/auth/token`, { method: 'POST', headers: AUTH_HEADERS });
+    if (res.ok) {
+      const { token } = await res.json();
+      logEventSource = new EventSource(`${API}/logs/${svc}/stream?token=${token}`);
+    } else {
+      // Fallback seguro si falla
+      logEventSource = new EventSource(`${API}/logs/${svc}/stream?key=${CC_API_KEY}`);
+    }
+  } catch (err) {
+    // Fallback seguro
+    logEventSource = new EventSource(`${API}/logs/${svc}/stream?key=${CC_API_KEY}`);
+  }
+
+  logEventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data && typeof data.line === 'string') {
+        appendLogLines([data.line]);
+      }
+    } catch(err) {}
+  };
+  logEventSource.onerror = () => {};
+}
+
+function selectLogSvc(svc, btn) {
+  currentLogSvc = svc;
+
+  // Update sidebar card highlights
+  document.querySelectorAll('.svc-card').forEach(c => c.classList.remove('active-log'));
+  const card = document.getElementById(`card-${svc}`);
+  if (card) card.querySelector('.svc-card')?.classList.add('active-log');
+
+  // Update log tab buttons
+  document.querySelectorAll('.log-svc-tab').forEach(b => b.classList.remove('active'));
+  if (btn) { btn.classList.add('active'); }
+  else {
+    document.querySelectorAll('.log-svc-tab').forEach(b => {
+      if (b.textContent.toLowerCase().replace(' ','_') === svc ||
+          b.getAttribute('onclick')?.includes(`'${svc}'`)) b.classList.add('active');
+    });
+  }
+
+  startLogStream(svc);
+}
+
+// ── Tab Switching ─────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+  document.querySelector(`.tab-btn[onclick*="'${name}'"]`).classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// ── Config ────────────────────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const res = await fetch(`${API}/config`, { headers: AUTH_HEADERS });
+    const cfg = await res.json();
+
+    // Models
+    for (const [k,v] of Object.entries(cfg.models||{})) {
+      const el = document.getElementById(`cfg-${k}`);
+      if (el) el.value = v;
+    }
+    // Eagerly fetch models for the picker
+    refreshOllamaModels(true);
+    // Services
+    if (cfg.services) {
+      const ne = document.getElementById('cfg-num_ollama_engines');
+      if (ne) ne.value = cfg.services.num_ollama_engines ?? 3;
+      const wd = document.getElementById('cfg-warmup_delay');
+      if (wd) {
+        wd.value = cfg.services.warmup_delay ?? 20;
+        document.getElementById('warmup-lbl').textContent = wd.value;
+        document.getElementById('warmup-display').textContent = wd.value + 's';
+      }
+    }
+    // Performance
+    for (const [k,v] of Object.entries(cfg.performance||{})) {
+      const el = document.getElementById(`cfg-${k}`);
+      if (el) el.value = v;
+    }
+    // Features
+    for (const [k,v] of Object.entries(cfg.features||{})) {
+      const el = document.getElementById(`cfg-${k}`);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = (String(v).toLowerCase() === 'true');
+      else el.value = v;
+    }
+  } catch(e) {
+    toast('No se pudo cargar la config (¿launcher activo?)', 'warn');
+  }
+}
+
+async function saveSection(section, btn) {
+  const payload = {};
+
+  if (section === 'models') {
+    payload.models = {};
+    ['LLM_FAST_MODEL','LLM_MODEL_NAME','LLM_CODER_MODEL','LLM_EMBED_MODEL','OLLAMA_URL'].forEach(k => {
+      const el = document.getElementById(`cfg-${k}`);
+      if (el) payload.models[k] = el.value;
+    });
+  }
+  else if (section === 'services') {
+    const ne = document.getElementById('cfg-num_ollama_engines');
+    const wd = document.getElementById('cfg-warmup_delay');
+    payload.services = {
+      num_ollama_engines: parseInt(ne?.value ?? 3),
+      warmup_delay: parseInt(wd?.value ?? 20),
+    };
+    if (wd) document.getElementById('warmup-display').textContent = wd.value + 's';
+  }
+  else if (section === 'performance') {
+    payload.performance = {};
+    ['COGNITIVE_MODE','RATE_LIMIT_REQUESTS','RATE_LIMIT_WINDOW',
+     'CHAT_HISTORY_MAX_SIZE','MAX_QUERY_LENGTH'].forEach(k => {
+      const el = document.getElementById(`cfg-${k}`);
+      if (el) payload.performance[k] = el.value;
+    });
+  }
+  else if (section === 'features') {
+    payload.features = {};
+    ['DISTILLATION','EVOLUTION','PROACTIVE'].forEach(k => {
+      const el = document.getElementById(`cfg-${k}`);
+      if (el) payload.features[k] = el.checked ? 'true' : 'false';
+    });
+    const tm = document.getElementById('cfg-TELEGRAM_MODE');
+    if (tm) payload.features.TELEGRAM_MODE = tm.value;
+  }
+
+  try {
+    await fetch(`${API}/config`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', ...AUTH_HEADERS},
+      body: JSON.stringify(payload),
+    });
+    toast(`✓ Config guardada`, 'ok');
+    if (btn) {
+      btn.textContent = '✓ GUARDADO';
+      btn.classList.add('saved');
+      setTimeout(() => { btn.textContent = 'GUARDAR'; btn.classList.remove('saved'); }, 2000);
+    }
+    // RECARGAR CONFIGURACIÓN PARA SINCRONIZAR ESTADO DE LA UI
+    await loadConfig();
+  } catch(e) {
+    toast(`Error guardando: ${e.message}`, 'err');
+  }
+}
+
+// ── Ollama Models Picker ──────────────────────────────────────────────
+let cachedModels = [];
+
+async function refreshOllamaModels(silent = false) {
+  try {
+    if (!silent) toast('Buscando modelos en Ollama...', 'info');
+    const res = await fetch(`${API}/ollama/models`, { headers: AUTH_HEADERS });
+    const data = await res.json();
+    if (data.error) {
+      if (!silent) toast(`Error Ollama: ${data.error}`, 'err');
+      return;
+    }
+    cachedModels = data.models || [];
+    if (!silent) toast(`${cachedModels.length} modelos cargados. Haz clic en 📋 para verlos.`, 'ok');
+  } catch(e) {
+    if (!silent) toast('Ollama no responde en puerto 11434', 'err');
+  }
+}
+
+function togglePicker(inputId) {
+  const overlay = document.getElementById(`picker-${inputId}`);
+  if (!overlay) return;
+
+  // Close other pickers
+  document.querySelectorAll('.picker-overlay').forEach(o => {
+    if (o.id !== `picker-${inputId}`) o.style.display = 'none';
+  });
+
+  if (overlay.style.display === 'block') {
+    overlay.style.display = 'none';
+    return;
+  }
+
+  // Populate
+  overlay.innerHTML = '';
+  if (cachedModels.length === 0) {
+    overlay.innerHTML = '<div class="picker-item">No hay modelos cargados.</div>';
+  } else {
+    cachedModels.forEach(m => {
+      const item = document.createElement('div');
+      item.className = 'picker-item';
+      item.textContent = m;
+      item.onclick = () => {
+        document.getElementById(inputId).value = m;
+        overlay.style.display = 'none';
+      };
+      overlay.appendChild(item);
+    });
+  }
+  
+  overlay.style.display = 'block';
+  
+  // Close on click outside
+  const closer = (e) => {
+    if (!overlay.contains(e.target) && !e.target.closest('.pick-btn')) {
+      overlay.style.display = 'none';
+      document.removeEventListener('click', closer);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closer), 10);
+}
+
+
+// ── Boot ──────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Render empty cards
+  ['backend','frontend','ollama_1','ollama_2','ollama_3'].forEach(id => {
+    renderCard(id, {status:'stopped', port: {backend:8000,frontend:3000,ollama_1:11434,ollama_2:11435,ollama_3:11436}[id], pid:null});
+  });
+
+  // Warmup range sync
+  const wd = document.getElementById('cfg-warmup_delay');
+  if (wd) wd.addEventListener('input', () => {
+    document.getElementById('warmup-display').textContent = wd.value + 's';
+  });
+
+  loadConfig();
+  fetchStatus();
+  setInterval(fetchStatus, 2000);
+  startLogStream('backend');
+});
+</script>
+</body>
+</html>

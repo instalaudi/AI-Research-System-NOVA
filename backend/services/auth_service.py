@@ -112,6 +112,12 @@ class AuthService:
         if user.id == admin_id:
             raise HTTPException(status_code=400, detail="No puedes desactivarte a ti mismo")
             
+        # v13.9.5: Seguridad para no quedarse sin administradores activos
+        if user.is_admin:
+            active_admins = db.query(User).filter(User.is_admin == True, User.is_active == True).count()
+            if active_admins <= 1:
+                raise HTTPException(status_code=400, detail="No se puede eliminar al último administrador activo.")
+            
         user.is_active = False
         db.commit()
         logger.info(f"User deactivated (logical delete): {user.username} by admin {admin_id}")

@@ -2,6 +2,306 @@
 
 Todas las actualizaciones y parches importantes aplicados a la arquitectura base se documentarán en este archivo.
 
+## [v12.0.0] - Agentic Skills & Deep Persistence (Mayo 6, 2026)
+
+Esta actualización mayor integra capacidades agenticas avanzadas extraídas del repositorio `master-skills-main`, elevando el nivel de autonomía, memoria y calidad de recuperación de conocimiento (RAG) de NOVA.
+
+### 🧠 Memoria Muscular (AgentMemory)
+- **Sistema de Lecciones Aprendidas:** Implementado `core/lessons_learned.py` usando SQLite FTS5. Ahora NOVA es capaz de aprender de sus propios errores.
+- **Auto-Corrección Activa:** El `DeveloperAgent` inyecta automáticamente advertencias y correcciones pasadas en su prompt de desarrollo si el `AuditorAgent` rechazó una construcción previa. Esto previene que el LLM cometa exactamente el mismo error en múltiples intentos.
+
+### 📚 Semantic Chunking (RAG Optimization)
+- **Segmentación Consciente:** El `Librarian` abandonó el viejo método de división arbitraria por caracteres. Ahora utiliza el `ChunkingOptimizer` para segmentar documentos respetando los límites lógicos, encabezados Markdown y saltos de párrafo, mejorando exponencialmente la calidad semántica en ChromaDB.
+
+### 🛡️ Estabilidad del Enjambre
+- **Handoff Protocol:** Implementado el protocolo formal de transferencia de contexto `_build_handoff` en el Orquestador, asegurando que ninguna instrucción técnica se pierda cuando una tarea pasa entre agentes del Swarm.
+- **Anti-Drift Limits (ADL):** Inyectados guardarraíles VFM (Value-First Modification) en el prompt de Auto-Evolución. NOVA ahora priorizará la "Estabilidad Estructural" por encima de añadir librerías sin beneficio diario comprobable.
+
+## [v11.9.22] - Active Agentic Skills & Tool Calling (Mayo 1, 2026)
+
+Esta actualización transforma a NOVA de un sistema reactivo a un **Agente Activo con Capacidad de Acción**, permitiendo la manipulación segura del entorno local y la carga modular de conocimiento experto.
+
+### 🧠 Motor de Skills (Skill Manager)
+- **Carga Modular de Contexto:** Implementado `backend/core/skill_manager.py` que permite inyectar instrucciones específicas (Skills) al prompt del sistema bajo demanda. Esto reduce el consumo de tokens y previene la saturación de instrucciones en el prompt global.
+- **Carpeta de Habilidades:** Se creó `backend/skills/` para almacenar manuales de instrucciones en Markdown.
+- **Skill de Terminal Habilitada:** Implementada la `terminal_skill.md` que dota a NOVA de la consciencia necesaria para proponer comandos de sistema estructurados en JSON.
+
+### 🛠️ Interacción de Sistema (Tool Calling & Loop)
+- **Bucle de Acción Humana (Human-in-the-Loop):** Refactorizado `chat_service.py` para interceptar peticiones de herramientas. NOVA ahora puede proponer un comando de terminal, el cual queda en "pausa" hasta que el usuario lo apruebe o rechace explícitamente en el chat.
+- **Manejo de Observaciones:** Una vez aprobado, el sistema ejecuta el comando, captura el `stdout/stderr` y se lo re-inyecta a NOVA de forma invisible para que continúe la conversación con datos reales del PC.
+
+### 🛡️ Seguridad y Blindaje (Sandboxing)
+- **Firewall de Ejecución:** Implementado `backend/core/tool_executor.py` con una lista negra de patrones destructivos. NOVA tiene prohibido tocar `C:\Windows`, modificar el registro o borrar sus propios archivos núcleo (`Self-Preservation Guard`).
+- **Concurrencia de ChromaDB:** Corregido el bloqueo crítico del Event Loop envolviendo todas las llamadas a ChromaDB con `asyncio.to_thread`.
+- **Integridad ACID en SQLite:** Se protegieron todas las transacciones de `TaskQueue` con bloques `try-except-rollback` para evitar corrupciones de base de datos ante cancelaciones abruptas.
+
+
+## [v11.9.21] - Autonomous Self-Evolution & Backups (Abril 30, 2026)
+
+Esta actualización dota a NOVA de la capacidad de auto-modificar su núcleo de forma segura, permitiendo despliegues automáticos con respaldo de seguridad y reinicios autónomos.
+
+### 🧠 Auto-Evolución Autónoma
+- **Escritura Autónoma Habilitada:** Se removió el candado de seguridad (`ALLOW_AUTO_FILE_WRITE = True`). Ahora NOVA aplica las mejoras de arquitectura generadas durante su ciclo de vigilancia directamente al sistema.
+- **Protocolo de Backups Inquebrantable:** El sistema ahora realiza una copia de seguridad (`data/backups/evolution_<tecnologia>_<timestamp>/`) del archivo original antes de sobrescribirlo, garantizando la reversibilidad ante fallos generados por la IA.
+- **Auto-Resurrección (Gatillo de Reinicio):** Implementado el método `_trigger_reboot()` que utiliza el Control Center (`launcher_server.py`) para reiniciar el proceso backend en caliente tras modificar el núcleo, aplicando el código nuevo en la memoria RAM en ~2 segundos.
+
+### 📜 Trazabilidad Extendida (Control Center)
+- **Persistencia de Logs en Disco:** Los registros de la consola para cada subsistema (backend, frontend, ollama) ahora se guardan de forma permanente en archivos de texto en la carpeta `logs/` (ej. `logs_backend.txt`).
+- **Ampliación de Historial Web:** Se aumentó el límite de memoria del buffer en vivo (`deque`) de 600 a 5000 líneas, proveyendo un historial 10 veces más largo en la interfaz web sin fugas de RAM.
+
+### ⚙️ Autoconciencia de Hardware (Hardware Awareness)
+- **Detección Dinámica (`telemetry.py`):** Implementada la función `get_hardware_context()` que lee en tiempo real el uso de CPU (núcleos físicos), RAM total y detecta automáticamente si el sistema posee una GPU dedicada (NVIDIA/AMD) o gráficos integrados (iGPU) usando `wmic`/`psutil`.
+- **Inyección en Agentes (`DeveloperAgent`):** Se inyectó la *Regla de Oro 10*, instruyendo a NOVA a prohibir el uso de frameworks pesados (ej. LangGraph, Kafka, PyTorch) si detecta que no posee hardware masivo, forzando soluciones ultraligeras y bare-metal en Python.
+- **Filtro de Evolución (`self_evolution.py`):** El ciclo de vigilancia tecnológica ahora está "consciente" de su cuerpo y descarta tecnologías incompatibles con su lectura de hardware en tiempo real.
+
+---
+
+## [v11.9.20] - Generation Pipeline Stabilization (Abril 29, 2026)
+
+Esta actualización resuelve el bucle de fallos en la generación de proyectos, optimiza el uso de recursos durante builds y mejora la integración con Telegram.
+
+### 🏗️ Developer & Auditor Pipeline
+- **Detección de Errores Repetidos:** El `DeveloperAgent` ahora aborta tras 2 intentos con críticas idénticas (>80% similitud), ahorrando ~30 min de CPU inútil.
+- **Auditoría Pragmática:** Reescritura del prompt del Auditor para priorizar la funcionalidad sobre la estética. Ya no se rechazan proyectos por warnings menores (F401) o sugerencias de estilo.
+- **Detección de Truncamiento:** Nuevo sistema de pre-validación que detecta archivos cortados (ej. HTML incompleto) antes de llamar al Auditor, reintentando instantáneamente con feedback correctivo.
+
+### 🚦 Resource & Task Management
+- **Smart Build Threshold:** El `HealthMonitor` ahora otorga 35 minutos a las tareas de construcción (antes 15 min), evitando re-encolados prematuros en builds pesadas sobre CPU.
+- **Build-Aware Evolution:** El ciclo de auto-evolución ahora detecta builds activas y se pospone automáticamente para no competir por el LLM.
+- **Telegram Activity Tracking:** Las interacciones vía Telegram ahora registran actividad del usuario, permitiendo que el sistema de "Prioridad Inteligente" pause tareas de fondo correctamente.
+
+---
+
+
+
+Esta actualización implementa el 100% de las resoluciones derivadas de la auditoría profunda de seguridad, arquitectura y rendimiento.
+
+### 🛡️ Security Hardening (Fase 1)
+
+- **Control Center Auth (C-2):** El panel de control (`launcher_server.py`) ahora está protegido por `X-CC-API-Key` y bloqueado a `127.0.0.1` con CORS estricto.
+- **Rotación de Credenciales (C-1):** Generación de nuevo `JWT_SECRET_KEY` y limpieza de variables de entorno expuestas (`CORS_ORIGINS=*`).
+- **Config Whitelist (M-1):** Protección contra inyección de variables de entorno arbitrarias en el endpoint de configuración.
+
+### 🧠 Graph & Memory Optimization (Fase 2)
+
+- **ChromaDB Orphan Cleanup (M-4):** Sincronización automática de bases vectoriales con SQLite, eliminando documentos fantasmas tras podas de grafos en batches de 100.
+- **Matplotlib Lazy-Loading (M-5):** Ahorro de ~100MB de RAM en el backend importando la librería de gráficos de manera diferida y en hilos asíncronos (`asyncio.to_thread`).
+- **PromptGuard Hardened (M-8):** Arquitectura de 5 capas de defensa contra prompt injection, homoglifos Unicode, y contexto RAG envenenado.
+
+### ⚙️ Concurrency & Resilience (Fase 3)
+
+- **Ollama Warm-up Loop (M-9):** Sistema de reintentos resiliente que evita cold-starts fatales en la inicialización del motor local.
+- **Error Sanitization (M-2):** Los registros del `DeveloperAgent` truncan trazas y enmascaran rutas absolutas antes de guardarlas en el `ChatLog`.
+- **SQLite Batching (M-6, m-6):** Agrupación de operaciones transaccionales en un solo `commit` y delegación a hilos separados (`to_thread`) para liberar el event loop asíncrono.
+- **Anti-Mutation Guard (M-7):** Bloqueo explícito (`ALLOW_AUTO_FILE_WRITE = False`) al agente de auto-evolución para prevenir daños al núcleo del sistema.
+
+### 🎙️ STT Upgrade
+
+- **Whisper v3-Turbo:** Upgrade del modelo de reconocimiento de voz de `base` a `turbo` (large-v3-turbo). Precisión cercana a large-v3 con velocidad optimizada para CPU. Configurable vía `WHISPER_MODEL` en `.env`.
+
+### 🚀 Performance (Arranque & RAG)
+
+- **Embeddings Eager-Load:** El modelo de embeddings (`all-MiniLM-L6-v2`) ahora se pre-carga al arranque en paralelo con Whisper y TTS, eliminando ~13s de latencia en la primera query RAG del usuario.
+- **HuggingFace Offline Mode:** Se desactivan las verificaciones HTTP a HuggingFace Hub (`HF_HUB_OFFLINE=1`) al cargar el modelo de embeddings, eliminando ~20 requests HEAD innecesarias ya que el modelo está en caché local.
+- **Ollama Model Picker:** Nueva funcionalidad en el Control Center que lista los modelos instalados localmente. Permite seleccionar modelos (Fast, Main, Coder) desde un desplegable, eliminando errores tipográficos al configurar el sistema.
+- **PromptGuard Expanded:** Añadidos sinónimos (`órdenes`, `directivas`, `limitaciones`, `mandatos`) y verbos (`sáltate`, `omite`) al regex de detección de inyección, cerrando un bypass descubierto en testing en vivo.
+- **Identidad Social Suavizada:** NOVA ya no rechaza cortesías del usuario. Responde brevemente a saludos y pasa al tema, en lugar de negarse a participar.
+
+---
+
+## [v11.9.15] - Stabilization, Optimization & Premium UI (Abril 17, 2026)
+
+### 🧠 Estabilización Cognitiva y Memoria
+- **Esterilización de Bucle "Orita"**: Limpieza profunda de la base de datos para eliminar contaminaciones de contexto y respuestas genéricas repetitivas.
+- **Identidad Blindada (Regla #1)**: Refuerzo estricto del prompt de identidad (Social y Estándar) para prohibir saludos y formalismos innecesarios.
+- **Confirmación Visual de Aprendizaje**: Implementación de confirmaciones explícitas `[!TIP]` al final de las respuestas cuando NOVA almacena información en memoria.
+- **Prioridad de Intención**: Reestructuración del clasificador para que las órdenes de aprendizaje tengan precedencia sobre las de conversación casual.
+
+### 🚀 Optimización de Arranque ("Modo Turbo")
+- **Lifespan Paralelo**: El backend ahora carga el escaneo de integridad, el modelo de oído (Whisper) y la voz de NOVA simultáneamente, reduciendo el retardo de inicio percibido.
+- **Launcher Ágil**: Reducción del retardo de pre-calentamiento (warm-up) de 20s a 10s en el Control Center.
+
+### 💎 Interfaz de Terminal Premium v2
+- **Temática Tech-Blue**: Implementación de color de consola `0B` (Cian Neón) para una estética de investigación de vanguardia.
+- **Blindaje de Caracteres (UTF-8)**: Forza el uso de `chcp 65001` en Windows para eliminar símbolos extraños y asegurar que el arte ASCII se vea perfecto.
+- **ASCII Art Robusto**: Nuevo logo de NOVA v11.9.15 utilizando cadenas "raw" en Python para evitar errores de sintaxis y cierres inesperados de terminal.
+
+---
+
+## [v11.9.2] - Control Center Master Orchestration & Hardware Guard (Abril 17, 2026)
+
+### 🎛️ Control Center Unificado (Puerto 9999)
+
+- **Rutas Absolutas Anti-Crash**: Se corrigió el error `[WinError 267]` dentro del `launcher_server.py`. Ahora el orquestador resuelve inteligentemente el `PROJECT_ROOT`, permitiendo levantar servidores independientemente de desde dónde se ejecute el script.
+- **Limpieza de Puertos Dinámica**: Para evitar choques de `Address already in use`, incorporamos `_kill_port()` en el ciclo de arranque. Ahora NOVA destruye agresivamente cualquier servicio zombi (puertos 11434, 11435, 11436) antes de intentar reiniciar Ollama.
+- **Python Unicode Override**: Inyección de `PYTHONIOENCODING=utf-8` en el entorno virtual de arranque para prevenir colapsos (`UnicodeEncodeError`) en la consola de Windows al intentar imprimir caracteres especiales (✅, ⚠️).
+- **Master Script Único**: Eliminación de scripts heredados obsoletos (`start_ai_system*.bat`, `start.sh`) y reemplazo oficial por el único `start_NOVA.bat` guiado por el motor del Control Center.
+- **Silencio de Buffering de Python**: Refactorización del `subprocess.Popen` para usar el modo de Texto Activo (`text=True`), eliminando el molesto `RuntimeWarning` de `bufsize=1` en binario.
+
+### 🧠 Sincronización Biométrica (Metrics Dashboard)
+
+- **Real-Time Smart Cache**: La métrica de `Cache Hit Rate` en `/api/metrics/html` (puerto 8000) ya no muestra un valor "hardcoded" de 45.8%. Ahora el puente telemétrico consulta en tiempo real a `smart_cache.hit_rate` para mostrar el verdadero porcentaje de memoria muscular a corto plazo ahorrado.
+
+### 🖼️ Soporte Multimodal Total (V11.9.1 Vision Override)
+
+- **Caché Hashing Inteligente**: Tras descubrir que el sistema devolvía aciertos de caché rotos para imágenes ignorándolas, el generador criptográfico (`_generate_key`) asimila ahora los parámetros adjuntos en el hash maestro.
+- **Vision Gateway Bypass**: Se parcheó `chat_service.py` para obligar al servidor a eludir cualquier memoria temporal cuando el usuario adjunta fotografías o PDFs visuales garantizando que los ojos de NOVA jamás usen la "memoria" para leer un dato fresco.
+
+## [v11.8.3] - Intent Refinement & Interaction Guard (Abril 16, 2026)
+
+### 🛡️ Prevención de "Proyectos Fantasma"
+
+- **Filtro de Intenciones Hardened**: Limpieza profunda de los disparadores de `PROJECT_BUILD`. Palabras como "adelante", "hazlo" o "procede" ya no activan el motor de construcción por accidente.
+- **Validación de Requerimientos**: Implementado umbral de seguridad de **5 palabras** para órdenes de desarrollo. Si la orden es ambigua o corta, NOVA solicita aclaración en modo conversacional.
+
+## [v11.8.2] - Estabilización y Refinamiento Turbo (Abril 16, 2026)
+
+### ⚡ Arquitectura Vectorial Asíncrona (Manual Control)
+
+- **Zero-Block VectorDB**: Todas las operaciones vectoriales (búsqueda, indexación, borrado) han sido migradas a `async/await`. Se eliminaron los retardos en la interfaz de usuario causados por operaciones de E/S síncronas.
+- **Manual Vector Injection**: Desacoplamiento total de las funciones de embedding internas de ChromaDB, permitiendo un ahorro de **~500MB de RAM** y evitando errores de configuración en tiempo de ejecución.
+
+### 📊 Optimización de Monitoreo
+
+- **Caché de Dashboard**: Implementada caché de **30 segundos** para el `SystemService`, reduciendo el estrés en la base de datos durante el monitoreo continuo desde el panel de administración.
+
+### 💀 Dead Letter Queue (Gestión de Corrupción)
+
+- **Blacklist de Archivos**: Sistema de detección de corrupción en PDFs que marca archivos malformados en `corrupt_files.json`, evitando bucles infinitos de error en el motor `Librarian`.
+
+## [v11.8.1] - Neural Telegram Resilience (Abril 16, 2026)
+
+### 🛸 Gestión de Mensajes Largos
+
+- **Auto-Truncamiento e Inmortalidad**: Sistema inteligente que detecta respuestas de NOVA superiores a 4096 caracteres.
+- **Fallback a Documento**: Si el mensaje excede el límite de Telegram, NOVA genera automáticamente un archivo `.txt` y lo envía como documento, garantizando que ninguna respuesta se pierda.
+
+---
+
+## [v11.8.0] - Turbo Performance & Local Memory (Abril 16, 2026)
+
+### 🏎️ Optimización Masiva de Latencia
+
+- **Local Embeddings (Aceleración 500x)**: Migración total de la generación de vectores de Ollama a la librería local `sentence-transformers`. Las búsquedas pasaron de **28,000ms a <100ms**, eliminando el "gridlock" de memoria en CPU.
+- **Modelo Bibliotecario Local**: Integración del modelo `all-MiniLM-L6-v2` cargado en RAM de forma perezosa (lazy loading).
+
+### 🚦 Arquitectura de Prioridades 3-Tier
+
+Rediseño del orquestador para permitir multitarea real sin bloqueos:
+- **Prioridad 0 (Instantánea)**: Chat y comandos del usuario.
+- **Prioridad 1 (Preferente)**: Investigación activa (Planner, Explorer).
+- **Prioridad 2 (Background)**: Destilación, Evolución y Thinker. Ceden el paso automáticamente ante carga pesada.
+- **Concurrencia Dual**: Habilitación de 2 canales de IA simultáneos (`LLM_CONCURRENCY=2`), permitiendo investigar mientras se chatea.
+
+### 🛡️ Estabilidad y Resiliencia Extrema
+
+- **CPU Relief (Ryzen 7 Tuning)**: Ajuste de `OLLAMA_NUM_THREAD=4` para garantizar que el sistema operativo tenga recursos para carga de modelos durante tareas pesadas.
+- **API Resilience**: Implementación de reintentos con espera exponencial (backoff) para ArXiv y Semantic Scholar, resolviendo errores `429` por exceso de velocidad.
+- **Warm-up Cleanup**: Eliminación de verificaciones de manifiesto obsoletas en el arranque de Ollama.
+
+---
+
+## [v11.6.0] - El Auditor Híbrido & Protección CPU (Abril 15, 2026)
+
+### 🛡️ Auditoría Híbrida (Ruff + IA)
+
+- **Escudo Estático (Ruff)**: Integración de Ruff para validación técnica instantánea (<20ms).
+- **Rechazo Ultra-Rápido**: El sistema detecta y rechaza errores de sintaxis (`invalid-syntax`) antes de activar el LLM, ahorrando ciclos de CPU y tiempo.
+- **Contexto Técnico**: El Auditor de IA ahora recibe el reporte de Ruff para enfocarse exclusivamente en la lógica y arquitectura, ignorando fallos menores ya detectados.
+
+### 🚀 Prioridad Humana Absoluta (v11.5.0)
+
+- **Cerebro Unificado**: Eliminación de semáforos paralelos. NOVA ahora procesa una sola tarea de IA a la vez para evitar el "Gridlock" en procesadores Ryzen.
+- **Master Priority Semaphore**: Implementación de cola única donde el Chat tiene precedencia absoluta sobre el fondo.
+- **Pausa Global de Fondo**: Cualquier actividad del usuario (Chat/Dev) induce una pausa automática de 8s en todos los agentes de investigación y bibliotecario.
+- **Modo Serial Estricto**: Concurrencia fijada en 1 para hardware basado en CPU, garantizando latencias mínimas y fluidez total.
+
+### 🛠️ Robustez y Compatibilidad Windows
+
+- **Fix de Codificación (Charmap)**: Eliminación de emojis en logs críticos para garantizar compatibilidad con terminales Windows sin soporte UTF-8 nativo.
+
+---
+
+## [v11.4.4] - Silent Resilience & Metrics Sync (Abril 15, 2026)
+
+### 📊 Dashboard & Métricas Globales (v11.4.3)
+
+- **Sincronización de Calidad**: El indicador de "Capacidad Total" ahora refleja la salud de los **2,448 artículos** globales, eliminando la discrepancia visual con el promedio de confianza.
+- **Backend Quality Engine**: Nuevo cálculo en el servidor para el ratio de conocimiento de alta calidad (>55%).
+
+### 🛡️ Resiliencia Silenciosa (Telegram)
+
+- **Detector de Timeouts Inteligente**: NOVA ahora reconoce los `ReadTimeout` de red como eventos normales. Ya no se envían alertas de emergencia por retrasos temporales de conexión.
+- **Refactorización de Excepciones**: El radar de red ahora analiza la clase técnica de la excepción, garantizando una clasificación precisa de fallos de integridad vs. micro-cortes de internet.
+
+## [v11.4.2] - The Integrity & Swarm Update (Abril 15, 2026)
+
+### 🛡️ Sistema de Integridad y Antiduplicados (NUEVO)
+
+- **Huella Digital SHA-256**: Implementado sistema de hashing para identificar el contenido de los libros. NOVA ahora ignora automáticamente archivos duplicados aunque tengan nombres distintos.
+- **Detección por Título**: Verificación cruzada contra la base de datos para evitar re-procesar el mismo archivo.
+- **Alertas Inteligentes**: Interfaz de usuario con código de colores (Verde: Éxito, Ámbar: Duplicado, Rojo: Error).
+- **Migración Automática**: Incluido script de actualización `migrate_v11_4_2.py` para sincronizar bases de datos existentes con el nuevo esquema.
+
+### 🚀 Arquitectura Multi-Runtime (Desacoplamiento Total)
+
+- **Eliminación del Singleton LLM**: El motor de inferencia ya no es un cuello de botella único. Ahora cada agente instancia su propio cliente configurado.
+- **LLMRouter Centralizado**: Implementado cerebro de tráfico que redirige peticiones por agente:
+    - **Chat/General**: Puerto 11434 (`qwen3:8b`).
+    - **Developer**: Puerto 11435 (`qwen2.5-coder:7b`).
+    - **Audit/Visión**: Puerto 11436 (`llava-llama3`).
+- **Autodetección de Visión**: El Router detecta imágenes automáticamente y redirige la tarea al motor multimodal sin intervención del usuario.
+- **Pausa Dinámica de Destilería**: El sistema detecta cuando el usuario está en una sesión de alta prioridad (Chat/Dev) y pausa los motores de fondo para liberar CPU.
+
+### 📚 El Súper-Bibliotecario (Ingesta Masiva)
+
+- **Batch Ingestion**: Optimización de carga de PDFs mediante procesamiento por lotes (25 fragmentos por lote).
+- **Subida Múltiple Habilitada**: Interfaz corregida con atributo `multiple` para seleccionar colecciones enteras de una sola vez.
+- **Sequential Queue**: Procesamiento ordenado para proteger los 24GB de RAM y la CPU Ryzen 7.
+
+### 🛠️ Estabilidad y Telemetría
+
+- **Async Telemetry v2**: Migración total de monitoreo a `httpx` asíncrono para evitar que el Panel de Admin bloquee la generación de código.
+- **Arranque Automatizado**: Nuevo `start_ai_system.bat` que gestiona la limpieza de puertos (8000, 3000, 11434-11436) y el arranque secuencial de motores con warm-up de 20s.
+- **CPU Tuning**: Reducción de contexto a 2048 tokens y aumento de timeouts a 600s para garantizar estabilidad en hardware local sin GPU.
+
+---
+
+### 🚀 Gestión avanzada de activos y versionado local
+
+- **Snippet Cache UI**: `ProjectManager.tsx` ahora incluye pestaña **Librería** conectada a `GET /api/snippets/search`.
+- **Historial Semántico**: Nueva pestaña **Historial** conectada a `GET /api/history/search` para recuperar código por similitud semántica.
+- **Versionado Git automático**: Integrado flujo seguro de snapshots en `data/project_snapshots/` + auto-commit local por rutas explícitas.
+- **Historial Git visible**: Nuevo endpoint `GET /api/git/history` y pestaña **Git** en frontend.
+- **Inspección de cambios**: Nuevo endpoint `GET /api/git/diff/{commit_hash}` + drawer de diff en UI.
+- **UX mejorada del drawer**: Cierre por overlay, botón y tecla `Escape`.
+
+### 🛠️ Correcciones de estabilidad
+
+- **Fix de rutas API frontend**: Corrección de llamadas `apiFetch("/api/...")` a rutas relativas correctas (`/projects/list`, `/snippets/search`, `/history/search`).
+- **Manejo de errores por sección en ProjectManager**: Errores desacoplados por pestaña (`projects/snippets/history/git`) para evitar bloqueo global de la vista.
+- **Validación de respuestas HTTP**: Se añadió verificación `response.ok` antes de parsear JSON en llamadas críticas.
+- **Compatibilidad endpoint similares**: Se mantiene `POST /snippets/similar` y se añade `GET /snippets/similar?code=...`.
+
+---
+
+## [v11.1.1] - Project Manager & Auto-Tab Switching (Abril 13, 2026)
+
+### 🚀 Sistema de Gestión de Proyectos Generados
+
+- **Nuevo Componente Frontend**: Implementado `ProjectManager.tsx` con interfaz moderna para listar y descargar proyectos generados.
+- **Cambio Automático de Pestaña**: El frontend ahora detecta automáticamente cuando un proyecto ha sido creado exitosamente y cambia de pestaña para mostrar la lista de proyectos generados.
+- **Endpoint de Proyectos**: Nuevo endpoint `GET /api/projects/list` que lista todos los proyectos ZIP asociados al usuario con metadatos (tamaño, fecha de creación).
+- **Flujo Mejorado**: Ya no es necesario descargar automáticamente después de crear un proyecto. Ahora el usuario puede ver todos sus proyectos en una interfaz centralizada y descargar según sea necesario.
+- **Metadatos de Proyectos**: Cada proyecto muestra nombre, tamaño en formato legible, fecha de creación y opción de descarga directa.
+
+### 📝 Cambios Específicos
+
+- **`frontend/src/components/ProjectManager.tsx`**: Nuevo componente con grid responsive, manejo de errores y cargas asincrónicas.
+- **`frontend/src/app/page.tsx`**: Lógica de detección automática de creación de proyectos en el stream de respuesta.
+- **`backend/routers/chat.py`**: Nuevo endpoint `/projects/list` (línea 197).
+- **`backend/services/chat_service.py`**: Mensaje actualizado que guía al usuario a la pestaña de Proyectos en lugar de descargar automáticamente.
+
 ---
 
 ## [v11.1.0] - Telegram Neural Link & DB Tuning (Abril 2026)
@@ -226,7 +526,7 @@ Todas las actualizaciones y parches importantes aplicados a la arquitectura base
 ### 🛡️ Parches de Seguridad (Security Hardening)
 
 - **Zero-Day Traversal Fix**: Parcheo de una vulnerabilidad crítica documentada en `/download/{filename}` de `chat.py` que hubiera permitido descargas forzadas (`..%2f..%2f`) del entorno operativo. Obligatoriedad de prefijo seguro y `os.path.basename`.
-- **Amnesia de Base de Datos**: Reparación de un agujero negro de eventos en el gestor de streaming que no registraba colapsos y *timeouts* en el historial permanente `ChatLog`. 
+- **Amnesia de Base de Datos**: Reparación de un agujero negro de eventos en el gestor de streaming que no registraba colapsos y *timeouts* en el historial permanente `ChatLog`.
 
 ---
 

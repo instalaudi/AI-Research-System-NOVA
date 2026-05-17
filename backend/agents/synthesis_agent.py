@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 import json
 from agents.base_agent import BaseAgent
-from core.llm_client import llm_client
+from core.llm_gateway import llm_gateway
 from core.database import SessionLocal, KnowledgeEntry, KnowledgeNode, GraphLink
 
 class SynthesisAgent(BaseAgent):
@@ -83,7 +83,7 @@ class SynthesisAgent(BaseAgent):
             """
             
             messages = [{"role": "user", "content": prompt}]
-            response = await llm_client.chat(messages, temperature=0.2)
+            response = await llm_gateway.chat(messages, lane="batch", temperature=0.2, priority=1, ignore_overdrive=True)
             return response
 
         finally:

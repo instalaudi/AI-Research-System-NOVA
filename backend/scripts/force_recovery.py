@@ -2,20 +2,20 @@ import asyncio
 import os
 import sys
 
-# Aadir el directorio backend al path para poder importar los mdulos
-sys.path.append(os.path.join(os.getcwd(), "backend"))
+# Add project paths to import core modules dynamically
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(BASE_DIR)
 
 from core.task_queue import task_queue
-from core.orchestrator import orchestrator
 from core.database import init_db
 
 async def main():
-    print("Iniciando recuperacin forzada de tareas...")
+    print("Iniciando recuperación forzada de tareas...")
     init_db()
     
-    # Simular el arranque para que los workers estn listos (aunque no ejecutaremos el bucle principal de FastAPI)
-    # Solo necesitamos que recovery_scan inyecte las tareas en Redis
-    await task_queue.recovery_scan(orchestrator.handle_task)
+    # Simular el arranque para que los workers estén listos.
+    # El método recovery_scan detecta trabajos pendientes y los re-encola en Redis de forma autónoma.
+    await task_queue.recovery_scan()
     print("Escaneo de recuperacin completado. Las tareas pendientes han sido re-encoladas.")
 
 if __name__ == "__main__":

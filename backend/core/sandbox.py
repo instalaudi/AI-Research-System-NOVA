@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import os
+import sys
 import time
 from typing import Dict, Any
 
@@ -35,6 +36,12 @@ class CodeSandbox:
             '__mro__', '__subclasscheck__', '__init__', '__new__', '__globals__',
             '__code__', 'func_globals', 'func_code', '__module__', '__defaults__',
             '__kwdefaults__', '__closure__', '__annotations__', '__name__', '__getattribute__'
+        }
+        self._blocked_js_ts_keywords = {
+            'require(', 'import ', 'process.', 'child_process', 'eval(', 'Function(',
+            'setTimeout(', 'setInterval(', 'fetch(', 'XMLHttpRequest', 'WebSocket',
+            'window.', 'globalThis', 'Deno', 'fs.', 'net.', 'http.', 'https.',
+            'os.', 'spawn(', 'exec(', 'execSync', 'fork(', 'worker_threads', 'process.env'
         }
 
     def _is_module_blocked(self, module_name: str) -> bool:
@@ -84,7 +91,7 @@ class CodeSandbox:
                         val = node.value if isinstance(node, ast.Constant) else node.s
                         if isinstance(val, str):
                             # Very basic check for obfuscated builtins
-                            if any(b in val for b in ['eval', 'exec', '__import__', 'os.system']):
+                            if any(b in val for b in ['eval', 'exec', '__import__', 'os.system', 'subprocess', 'open', 'importlib']):
                                 return False
                     # FIX-C1: Block dangerous imports via AST
                     elif isinstance(node, ast.Import):
@@ -94,9 +101,17 @@ class CodeSandbox:
                     elif isinstance(node, ast.ImportFrom):
                         if node.module and self._is_module_blocked(node.module):
                             return False
-            except:
+            except Exception:
                 return False # If code doesn't parse, don't run it
-        
+        elif language in ["javascript", "typescript"]:
+            # Additional guarding for JS/TS, since we don't have an AST parser here.
+            for kw in self._blocked_js_ts_keywords:
+                if kw in code_lower:
+                    return False
+            # Block import/require statements and any attempt to reach process or file APIs.
+            if any(x in code_lower for x in ['require(', 'import ', 'process.', 'child_process', 'fs.', 'fetch(', 'globalthis', 'window.', 'document', 'new function', 'eval(']):
+                return False
+
         return True
 
     def _get_clean_env(self) -> Dict[str, str]:
@@ -104,11 +119,7 @@ class CodeSandbox:
         # Only keep basic path and standard vars
         safe_keys = ['PATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'USERPROFILE']
         env = {k: os.environ[k] for k in safe_keys if k in os.environ}
-        
-        # Add project root and backend to PYTHONPATH so sandbox can access safe local modules
-        cwd = os.getcwd()
-        backend_path = os.path.join(cwd, "backend")
-        env['PYTHONPATH'] = os.pathsep.join([cwd, backend_path])
+        env['PYTHONIOENCODING'] = 'utf-8'
         return env
 
     async def execute_python(self, code: str) -> Dict[str, Any]:
@@ -127,9 +138,10 @@ class CodeSandbox:
             import asyncio
             process = await asyncio.to_thread(
                 subprocess.run,
-                ["python", tmp_path],
+                [sys.executable, tmp_path],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=self.timeout,
                 env=self._get_clean_env()
             )
@@ -181,6 +193,7 @@ class CodeSandbox:
                 ["node", tmp_path],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=self.timeout,
                 env=self._get_clean_env()
             )
@@ -222,6 +235,7 @@ class CodeSandbox:
                 ["npx", "ts-node", "--skip-project", tmp_path],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=self.timeout + 10, # TS takes longer to compile
                 env=self._get_clean_env()
             )

@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { Activity, Lock, User as UserIcon, Mail, UserPlus, AlertCircle, CheckCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { BASE_URL } from "@/lib/api";
 
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
@@ -15,6 +16,15 @@ export default function RegisterPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +38,7 @@ export default function RegisterPage() {
     }
 
     try {
-      const response = await fetch("http://localhost:8000/api/register", {
+      const response = await fetch(`${BASE_URL}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, email, password }),
@@ -36,7 +46,9 @@ export default function RegisterPage() {
 
       if (response.ok) {
         setIsSuccess(true);
-        setTimeout(() => router.push("/login"), 2000);
+        timeoutRef.current = setTimeout(() => {
+          router.push("/login");
+        }, 2000);
       } else {
         const err = await response.json();
         setError(err.detail || "Error al crear la cuenta");

@@ -11,11 +11,23 @@ import json
 import asyncio
 import datetime
 import random
+import logging
+import re
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from core.llm_client import llm_client
+logger = logging.getLogger("core.distillation")
+
+from core.llm_gateway import llm_gateway
 from core.database import SessionLocal, KnowledgeEntry
+from core.config import (
+    DISTILL_MODEL_REASONING,
+    DISTILL_MODEL_GENERAL,
+    DISTILL_MODEL_CREATIVE,
+    DISTILL_MAX_CONCURRENCY,
+    DISTILL_MASTER_TIMEOUT_SECONDS,
+    DATA_DIR
+)
 
 
 # ── Temas de conocimiento que NOVA quiere aprender ───────────────
@@ -77,21 +89,93 @@ class NOVADistillationEngine:
 
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.ollama_url = ollama_url
-        self.dataset_path = Path("data/nova_dataset")
+        self.dataset_path = Path(DATA_DIR) / "nova_dataset"
         self.dataset_path.mkdir(parents=True, exist_ok=True)
         self._session_count = 0
         self._total_absorbed = 0
+        self._lock = asyncio.Lock() # v13.6.3: Asegurar que solo una sesión corra a la vez
+
 
         # Modelos maestros disponibles
         self.master_models = {
-            "reasoning": "deepseek-r1:8b",   # razonamiento profundo
-            "general":   "qwen2.5:3b",        # conocimiento general rápido
-            "creative":  "llama3.1:8b",       # creatividad y síntesis (reemplaza phi3)
+            "reasoning": DISTILL_MODEL_REASONING,   # razonamiento profundo
+            "general": DISTILL_MODEL_GENERAL,       # conocimiento general
+            "creative": DISTILL_MODEL_CREATIVE,     # creatividad/síntesis
         }
 
     # ══════════════════════════════════════════════════════════
     #  DESTILACIÓN PRINCIPAL
     # ══════════════════════════════════════════════════════════
+
+    async def distill_and_ingest(self, domain: str) -> bool:
+        """
+        v13.8.3: Método de Ingesta Directa de Alta Latencia.
+        Aumentado el timeout para permitir lecciones extensas de la nube.
+        """
+        async with self._lock:
+            logger.info(f"[Distillery] 🧬 Iniciando Destilación Maestra de: {domain}")
+            
+            prompt = f"""Eres el Maestro de Destilación de NOVA. 
+Genera una 'Clase Maestra' técnica sobre: '{domain}'.
+Nivel: Experto. Formato: JSON puro.
+
+{{
+  "title": "Lección Maestra: {domain}",
+  "content": "Explicación técnica exhaustiva (mínimo 600 palabras).",
+  "concepts": ["C1", "C2", "C3", "C4", "C5"],
+  "triplets": [["{domain}", "relacion", "Concepto"]],
+  "confidence_score": 0.99,
+  "category": "Destilación Maestra"
+}}
+"""
+            try:
+                # v13.8.4: Desactivar format="json" nativo para evitar bloqueos de Groq
+                # Manejaremos el parseo con nuestro _parse_json ultra-robusto
+                response = await llm_gateway.chat(
+                    [{"role": "user", "content": prompt}],
+                    lane="batch",
+                    model=self.master_models.get("reasoning"),
+                    temperature=0.4,
+                    priority=2,
+                    agent_name="distillery",
+                    timeout=500.0
+                )
+                
+                if not response:
+                    logger.warning(f"[Distillery] El Maestro de la nube no respondió para '{domain}'")
+                    return False
+
+                parsed = self._parse_json(response)
+                if not parsed:
+                    logger.warning(f"[Distillery] Fallo de parseo JSON. Respuesta cruda: {response[:200]}...")
+                    return False
+                
+                # Inyectar con defaults si faltan campos
+                parsed.setdefault("content", "Contenido no generado correctamente por el maestro.")
+                parsed.setdefault("title", f"Lección Maestra: {domain}")
+                
+                from core.knowledge_base import knowledge_base
+                await knowledge_base.add_entry(parsed, user_id=0) # ID 0 = System Learning
+                
+                self._total_absorbed += 1
+                logger.info(f"[Distillery] ✅ {domain} absorbido exitosamente. Grafo actualizado.")
+                return True
+                
+            except Exception as e:
+                # Detectar si es error de red (sin internet) vs error de API
+                err_name = type(e).__name__
+                network_errors = ("ConnectError", "ConnectTimeout", "NetworkError",
+                                  "RemoteProtocolError", "OSError", "ConnectionRefusedError")
+                if any(ne in err_name for ne in network_errors):
+                    # Sin internet: aviso tranquilo, no es un fallo crítico
+                    logger.info(
+                        f"[Distillery] 🌐 Modo offline detectado para '{domain}'. "
+                        f"Destilación cloud pospuesta hasta recuperar conexión."
+                    )
+                else:
+                    # Error de API (401, 429, etc.): registrar para revisión
+                    logger.warning(f"[Distillery] Error en destilación de '{domain}': {e}")
+                return False
 
     async def distill_session(
         self,
@@ -103,11 +187,14 @@ class NOVADistillationEngine:
         Ejecuta una sesión de destilación completa.
         NOVA pregunta a los maestros y absorbe su conocimiento.
         """
-        if not domain:
-            domain = random.choice(KNOWLEDGE_DOMAINS)
+        async with self._lock: # v13.6.3: Blindaje de concurrencia
+            if not domain:
+                domain = random.choice(KNOWLEDGE_DOMAINS)
 
         if not models_to_use:
             models_to_use = list(self.master_models.values())
+        # Evitar consultas duplicadas al mismo modelo por pregunta.
+        models_to_use = self._dedupe_models(models_to_use)
 
         print(f"[DISTILL] Sesión #{self._session_count+1} — Dominio: {domain}")
 
@@ -169,14 +256,31 @@ No repitas conceptos — cubre diferentes ángulos.
 Responde SOLO con JSON:
 {{"questions": ["pregunta 1", "pregunta 2", ...]}}"""
 
-        response = await llm_client.chat(
+        response = await llm_gateway.chat(
             [{"role": "user", "content": prompt}],
-            temperature=0.7
+            lane="batch",
+            model=DISTILL_MODEL_GENERAL,
+            temperature=0.7,
+            ignore_overdrive=True,  # v11.1: Permitir destilación incluso si usuario está activo
+            priority=2,
+            agent_name="distillery"
         )
 
         parsed = self._parse_json(response)
+        raw_questions = []
         if parsed and "questions" in parsed:
-            return parsed["questions"][:count]
+            raw_questions = parsed["questions"][:count]
+        
+        # v11.9.20: Normalización robusta — asegurar que son strings
+        questions = []
+        for q in raw_questions:
+            if isinstance(q, dict) and "question" in q:
+                questions.append(str(q["question"]))
+            elif isinstance(q, str):
+                questions.append(q)
+        
+        if questions:
+            return questions
 
         # Fallback: generar preguntas con templates
         return [
@@ -203,7 +307,8 @@ Responde SOLO con JSON:
                 tasks.append(self._query_single_master(question, model))
 
         # Ejecutar en paralelo con límite de concurrencia
-        semaphore = asyncio.Semaphore(3)
+        concurrency = max(1, DISTILL_MAX_CONCURRENCY)
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def bounded_query(task):
             async with semaphore:
@@ -223,31 +328,46 @@ Responde SOLO con JSON:
         question: str,
         model: str
     ) -> Dict[str, Any]:
-        """Consulta un modelo maestro específico."""
-        import httpx
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                r = await client.post(
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": question}],
-                        "stream": False,
-                        "options": {"temperature": 0.3, "num_predict": 600}
-                    }
+        """Consulta un modelo maestro específico con reintentos."""
+        # v11.9.20: Manejar casos donde la pregunta llegue como diccionario por alucinación del JSON
+        if isinstance(question, dict):
+            question = question.get("question", str(question))
+
+        if not isinstance(question, str) or not question.strip() or len(question) < 5:
+            print(f"[DISTILL] Pregunta inválida omitida: {question}")
+            return {}
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response_text = await llm_gateway.chat(
+                    messages=[{"role": "user", "content": question}],
+                    lane="batch",
+                    model=model,
+                    temperature=0.3,
+                    ignore_overdrive=True,
+                    priority=2,
+                    timeout=float(DISTILL_MASTER_TIMEOUT_SECONDS),
+                    agent_name="distillery"
                 )
-                if r.status_code == 200:
-                    data = r.json()
-                    response_text = data.get("message", {}).get("content", "")
-                    if response_text and len(response_text) > 50:
-                        return {
-                            "question": question,
-                            "response": response_text,
-                            "model":    model,
-                            "timestamp": datetime.datetime.utcnow().isoformat()
-                        }
-        except Exception as e:
-            print(f"[DISTILL] Error consultando {model}: {str(e)[:50]}")
+                if response_text and len(response_text) > 50:
+                    return {
+                        "question": question,
+                        "response": response_text,
+                        "model": model,
+                        "timestamp": datetime.datetime.utcnow().isoformat()
+                    }
+            except Exception as e:
+                print(
+                    f"[DISTILL] Error consultando {model} (intento {attempt+1}): "
+                    f"{type(e).__name__}: {str(e)}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Backoff exponencial: 1s, 2s, 4s
+                else:
+                    # v11.9.0: Log detallado del fallo final
+                    import traceback
+                    print(f"[DISTILL] Fallo definitivo para {model}: {traceback.format_exc()}")
         return {}
 
     # ══════════════════════════════════════════════════════════
@@ -336,13 +456,39 @@ Responde SOLO con JSON:
   "confianza": 0.85
 }}"""
 
-            response = await llm_client.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.5
-            )
+            try:
+                response = await llm_gateway.chat(
+                    [{"role": "user", "content": prompt}],
+                    lane="batch",
+                    model=DISTILL_MODEL_CREATIVE,
+                    temperature=0.5,
+                    ignore_overdrive=True,
+                    priority=2,
+                    agent_name="distillery"
+                )
+            except Exception as e:
+                logger.warning(f"[Distillery] Síntesis cloud falló ({e}). Intentando fallback local...")
+                # Fallback a modelo local rápido para no perder el conocimiento
+                response = await llm_gateway.chat(
+                    [{"role": "user", "content": prompt}],
+                    lane="batch",
+                    model=None, # Forzar default local
+                    temperature=0.3,
+                    priority=2,
+                    agent_name="distillery"
+                )
 
             parsed = self._parse_json(response)
             if parsed and parsed.get("respuesta_nova"):
+                # Normalización de campos para el frontend (v13.8.16)
+                # Mapear 'confianza' o 'score' a 'confidence_score'
+                confidence = parsed.get("confianza") or parsed.get("confidence") or parsed.get("score") or 0.85
+                parsed["confidence_score"] = float(confidence)
+                
+                # Asegurar otros campos requeridos por el Grafo
+                parsed["content"] = parsed.get("respuesta_nova")
+                parsed["title"] = f"[DISTILLED] {parsed.get('pregunta_nova', domain)}"
+                
                 parsed["source_model"] = resp.get("model", "unknown")
                 parsed["domain"]       = domain
                 parsed["timestamp"]    = datetime.datetime.utcnow().isoformat()
@@ -394,8 +540,9 @@ Responde SOLO con JSON:
                         "domain":       entry.get("domain", ""),
                         "category":     entry.get("categoria", ""),
                         "level":        entry.get("nivel", ""),
-                        "confidence":   entry.get("confianza", 0.8),
+                        "confidence":   max(0.65, float(entry.get("confianza") or 0.8)),
                         "source_model": entry.get("source_model", ""),
+
                         "timestamp":    entry.get("timestamp", ""),
                     }
                 }
@@ -422,19 +569,20 @@ Responde SOLO con JSON:
                         title            = title,
                         category         = f"Destilación/{entry.get('categoria','General')}",
                         content          = entry.get("respuesta_nova", ""),
-                        confidence_score = float(entry.get("confianza", 0.8)),
+                        confidence_score = max(0.65, float(entry.get("confianza") or 0.8)),
                         concepts         = ",".join(entry.get("conceptos_clave", [])),
+
                         source_urls      = json.dumps([entry.get("source_model","")]),
                         consensus_label  = "distilled",
                         quality_flag     = "distillation_pipeline",
                     )
                     db.add(ke)
-
+                    
                     # Indexar en vector DB
                     try:
                         from core.vector_db import vector_db
                         text = f"{entry.get('pregunta_nova','')} {entry.get('respuesta_nova','')}"
-                        vector_db.index_article(
+                        await vector_db.index_article(
                             f"distill_{timestamp}_{saved}",
                             text,
                             {"domain": domain, "type": "distilled"}
@@ -446,15 +594,17 @@ Responde SOLO con JSON:
         except Exception as e:
             db.rollback()
             # v11.0: Registrar conflicto en DB
+            import traceback
+            full_trace = traceback.format_exc()
+            print(f"[DISTILL] Error guardando en DB: {e}\n{full_trace}")
             try:
                 from services.system_service import system_service
-                asyncio.create_task(system_service.log_system_failure(
+                task = asyncio.create_task(system_service.log_system_failure(
                     type='DB_CONFLICT',
-                    description=f'Conflicto en destilación: {str(e)[:100]}',
+                    description=f'Conflicto en destilación: {str(e)[:100]}\n{full_trace[:300]}',
                     severity='warning'
                 ))
             except: pass
-            print(f"[DISTILL] Error guardando en DB: {e}")
         finally:
             db.close()
 
@@ -468,9 +618,10 @@ Responde SOLO con JSON:
     async def run_full_distillation(
         self,
         domains: List[str] = None,
-        sessions_per_domain: int = 2,
-        questions_per_session: int = 5
+        sessions_per_domain: int = 1,
+        questions_per_session: int = 3
     ) -> Dict[str, Any]:
+
         """
         Ejecuta destilación completa sobre múltiples dominios.
         NOVA aprende de todo lo que puede en una sola pasada.
@@ -505,7 +656,20 @@ Responde SOLO con JSON:
                     # Pequeña pausa entre sesiones
                     await asyncio.sleep(2)
                 except Exception as e:
+                    # v11.9.0: Logging detallado con traceback completo
+                    import traceback
+                    full_trace = traceback.format_exc()
                     print(f"[DISTILL] Error en sesión {domain}: {e}")
+                    print(f"[DISTILL] Traceback: {full_trace}")
+                    try:
+                        from services.system_service import system_service
+                        asyncio.create_task(system_service.log_system_failure(
+                            type='DISTILL_ERROR',
+                            description=f'Destilación fallida [{domain}]: {str(e)[:200]}\n{full_trace[:500]}',
+                            severity='warning'
+                        ))
+                    except Exception:
+                        pass
                     total_results["errors"] += 1
 
             total_results["by_domain"][domain] = domain_absorbed
@@ -558,21 +722,115 @@ Responde SOLO con JSON:
         }
 
     def _parse_json(self, text: str) -> Optional[Dict]:
-        """Extrae JSON de respuesta del LLM."""
+        """
+        v13.8.1: Parseo ultra-robusto para modelos de nube.
+        Extrae JSON incluso si está envuelto en Markdown o tiene texto basura.
+        """
         if not text:
             return None
-        import re
+        
+        # 1. Limpieza básica
+        clean_text = text.strip()
+        
+        # 2. Intentar parseo directo (strict=False permite newlines literales en strings)
         try:
-            return json.loads(text.strip())
+            return json.loads(clean_text, strict=False)
         except Exception:
             pass
-        m = re.search(r'\{[\s\S]*\}', text)
-        if m:
+            
+        # 3. Extraer contenido del bloque Markdown si existe
+        #    Soporta tanto ```json...``` como bloques sin cerrar (texto truncado)
+        md_match = re.search(r'```(?:json)?\s*(\{[\s\S]*)', clean_text)
+        if md_match:
+            # Tomar todo lo que hay después de la apertura del bloque
+            inner = md_match.group(1)
+            # Cortar en el cierre del bloque si existe
+            inner = re.sub(r'```\s*$', '', inner).strip()
             try:
-                return json.loads(m.group())
+                return json.loads(inner, strict=False)
             except Exception:
                 pass
+
+        # 4. Búsqueda por Regex (el primer { y el último })
+        m = re.search(r'(\{[\s\S]*\})', clean_text)
+        if m:
+            candidate = m.group(1)
+            try:
+                return json.loads(candidate, strict=False)
+            except Exception:
+                pass
+
+        # 5. INTENTO DESESPERADO: Reparación de Truncación (v13.8.17)
+        # Si llegamos aquí, es probable que el JSON esté cortado al final
+        try:
+            repaired = self._repair_truncated_json(clean_text)
+            if repaired:
+                return json.loads(repaired, strict=False)
+        except Exception:
+            pass
+        
+        # 6. Registro de fallo para depuración
+        logger.warning(f"[Distillery] Fallo crítico de parseo. Inicio de respuesta: {text[:200]}...")
         return None
+
+    def _repair_truncated_json(self, text: str) -> Optional[str]:
+        """
+        v13.8.18: Reparación Ultra-Agresiva.
+        Cierra bloques markdown, comillas y llaves de un JSON truncado.
+        """
+        if not text: return None
+        json_str = text.strip()
+        
+        # 1. Si hay un bloque markdown abierto sin cerrar, cerrarlo a la fuerza
+        if "```" in json_str and json_str.count("```") % 2 != 0:
+            json_str += "\n```"
+            
+        # 2. Extraer el contenido del bloque si existe ahora que está cerrado
+        md_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?)\s*```', json_str)
+        if md_match:
+            json_str = md_match.group(1)
+        else:
+            # Si no hay bloques, buscar desde la primera llave
+            start_idx = json_str.find('{')
+            if start_idx != -1:
+                json_str = json_str[start_idx:]
+
+        # 3. Limpiar basura al final SIN destruir contenido válido
+        #    Solo eliminar texto suelto tras la última comilla o cierre de estructura
+        json_str = json_str.rstrip()
+        # Cortar texto que quedó abierto tras la última comilla cerrada
+        # (ej: "content": "texto cortado a mit  <-- eliminar solo lo que sigue al último token válido)
+        json_str = re.sub(r',\s*$', '', json_str)  # quitar coma final
+        
+        # 4. Balancear comillas (si hay un número impar, la última está abierta)
+        if json_str.count('"') % 2 != 0:
+            json_str += '"'
+            
+        # 5. Balancear estructuras (llaves y corchetes)
+        stack = []
+        for char in json_str:
+            if char == '{': stack.append('}')
+            elif char == '[': stack.append(']')
+            elif char == '}' or char == ']':
+                if stack and stack[-1] == char:
+                    stack.pop()
+        
+        # Cerrar en orden inverso lo que quedó pendiente
+        json_str += "".join(reversed(stack))
+        
+        return json_str
+
+    @staticmethod
+    def _dedupe_models(models: List[str]) -> List[str]:
+        seen = set()
+        deduped = []
+        for model in models:
+            key = (model or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(key)
+        return deduped
 
 
 # Instancia global
@@ -591,11 +849,23 @@ async def run_distillation_scheduler():
     """
     print("[DISTILL] Scheduler de destilación iniciado (cada 24h)")
 
-    # Primera ejecución después de 5 minutos del arranque
-    await asyncio.sleep(300)
+    # v11.9.18: Delay inicial subido a 30m para evitar saturación en el arranque
+    await asyncio.sleep(1800)
 
     while True:
         try:
+            from services.system_service import system_service
+            if not system_service.is_feature_enabled("distillation"):
+                await asyncio.sleep(3600)
+                continue
+            
+            # v11.9.18: PRIORIDAD INTELIGENTE
+            # Si el usuario está activo, posponemos la destilación para no saturar CPU
+            if system_service.is_cpu_resource_reserved():
+                print("[DISTILL] ⏳ Usuario activo detectado. Posponiendo destilación 10 min para prioridad chat.")
+                await asyncio.sleep(600)
+                continue
+
             print("[DISTILL] Iniciando destilación nocturna automática...")
             await nova_distillation.run_full_distillation(
                 sessions_per_domain=1,

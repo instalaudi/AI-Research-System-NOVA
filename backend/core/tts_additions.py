@@ -9,12 +9,12 @@ from fastapi.responses import Response
 
 # 2. EN lifespan() — agregar después de stt_model:
 
-    print("Inicializando voz de NOVA (TTS)...")
-    try:
-        await nova_voice.initialize()
-        print("✅ Voz de NOVA lista")
-    except Exception as e:
-        print(f"⚠ TTS no disponible: {e}")
+#    print("Inicializando voz de NOVA (TTS)...")
+#    try:
+#        await nova_voice.initialize()
+#        print("✅ Voz de NOVA lista")
+#    except Exception as e:
+#        print(f"⚠ TTS no disponible: {e}")
 
 # 3. NUEVOS ENDPOINTS — pegar antes de /health:
 
@@ -81,8 +81,10 @@ async def ask_with_voice(
             image_context = ""
         )
 
-        text_response = await llm_client.chat(
+        from core.llm_gateway import llm_gateway
+        text_response = await llm_gateway.chat(
             [{"role": "user", "content": prompt}],
+            lane="realtime",
             temperature=0.7
         )
 

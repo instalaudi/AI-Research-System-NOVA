@@ -1,8 +1,24 @@
 import os
-from dotenv import load_dotenv  # type: ignore
+# HuggingFace / Stability Tweaks (Silenciar advertencias de terminal)
+# v11.9.18: Forzar antes de cualquier importación de librerías
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+if not os.getenv("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = "hf_dummy_token_to_silence_warnings"
 
 # Load .env file
+from dotenv import load_dotenv  # type: ignore
 load_dotenv()
+
+# System Version
+VERSION = "13.8.0"
+SYSTEM_VERSION = VERSION  # v13.8.0: NOVA OVERDRIVE FINALIZED — Graph-RAG + Reflective Dev + Deep Swarm
+
+# ── Path Configuration (Absolute to Backend) ─────────────────────
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+# Asegurar que la carpeta data exista
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # Security Configuration
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -14,7 +30,7 @@ MAX_TOPICS_PER_DAY = 10
 QUALITY_THRESHOLD = 0.55  # Reducido (antes 0.65) para permitir que más artículos superen el filtro de calidad
 SIMILARITY_THRESHOLD = 0.92
 MAX_TASK_RETRIES = 3
-TASK_TIMEOUT_SECONDS = 300
+TASK_TIMEOUT_SECONDS = 600
 TASK_TIMEOUT_LLM_SECONDS = 1200
 CHAT_HISTORY_MAX_SIZE = 100
 MAX_QUERY_LENGTH = 50000
@@ -23,7 +39,7 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 DEFAULT_MAX_WORKERS = 2  # v10.10.0: Reducido para estabilidad de CPU
 
 # ── Queue Backpressure (Anti Auto-DDOS) ─────────────────────────
-QUEUE_BACKPRESSURE_THRESHOLD = int(os.getenv("QUEUE_BACKPRESSURE_THRESHOLD", "300"))
+QUEUE_BACKPRESSURE_THRESHOLD = int(os.getenv("QUEUE_BACKPRESSURE_THRESHOLD", "150"))
 QUEUE_HIGH_PRIORITY_THRESHOLD = int(os.getenv("QUEUE_HIGH_PRIORITY_THRESHOLD", "150"))
 TASK_DYNAMIC_TIMEOUT_CAP = int(os.getenv("TASK_DYNAMIC_TIMEOUT_CAP", "120"))  # segundos extra máx
 
@@ -32,35 +48,57 @@ CIRCUIT_BREAKER_FAILURE_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_FAILURE_THRES
 CIRCUIT_BREAKER_RECOVERY_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_RECOVERY_TIMEOUT", "60"))
 
 # ── Thinker / Proactive Limits ───────────────────────────────────
-THINKER_MAX_EXECUTION_SECONDS = int(os.getenv("THINKER_MAX_EXECUTION_SECONDS", "90"))
+THINKER_MAX_EXECUTION_SECONDS = int(os.getenv("THINKER_MAX_EXECUTION_SECONDS", "180"))
 THINKER_QUEUE_THRESHOLD = int(os.getenv("THINKER_QUEUE_THRESHOLD", "500"))
+THINKER_USE_FAST_LANE = os.getenv("THINKER_USE_FAST_LANE", "true").lower() == "true"
 RESEARCH_DOMAINS_FOCUS = ["STEM", "Software Architecture", "AI Ethics", "Cybersecurity"]
 
 # Model Configuration
-LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH", "models/llama3-8b.gguf")
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.1:8b")
-LLM_EMBED_MODEL = os.getenv("LLM_EMBED_MODEL", "all-minilm")
+LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH", "models/qwen2.5:1.5b.gguf")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen2.5:1.5b")
+# v11.8: Migración a Local Embeddings para evitar latencia de Ollama (28s -> 100ms)
+USE_LOCAL_EMBEDDINGS = os.getenv("USE_LOCAL_EMBEDDINGS", "true").lower() == "true"
+LLM_EMBED_MODEL = os.getenv("LLM_EMBED_MODEL", "all-MiniLM-L6-v2")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
-OLLAMA_NUM_THREAD   = int(os.getenv("OLLAMA_NUM_THREAD",   "4")) # v10.11.0: 50% CPU para fluidez total
+# v11.2: Endpoints especializados
+# v11.6.1: Consolidación a puerto único para estabilidad en CPU
+LLM_DEV_URL = os.getenv("LLM_DEV_URL", "http://localhost:11434/api/chat")
+LLM_AUDIT_URL = os.getenv("LLM_AUDIT_URL", "http://localhost:11434/api/chat")
+
+OLLAMA_NUM_THREAD   = int(os.getenv("OLLAMA_NUM_THREAD",   "6")) # v11.9.0: Reducido a 6 para reservar 2 cores para backend Python + OS (Ryzen 7 5700G 8C/16T)
 
 # ── Parámetros de generación de Ollama ──────────────────────────────────────
 # FIX #3: Subido de 2048 a 4096 para que coincida con ContextManager.max_tokens=4000.
 # Con 2048, Ollama truncaba silenciosamente el contexto RAG en cada petición.
-# FIX: Subido de 4096 a 8192 para dar espacio real al prompt + contexto RAG + historial.
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX",     "8192"))
-OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
-# FIX CRÍTICO: Chat ahora usa qwen3:8b (8B params, modo dual thinking/fast, mejor español)
-# Antes: qwen2.5:1.5b causaba alucinaciones masivas por ser demasiado pequeño.
-LLM_FAST_MODEL = os.getenv("LLM_FAST_MODEL", "qwen3:8b")
-LLM_CODER_MODEL = os.getenv("LLM_CODER_MODEL", "qwen2.5-coder:7b")
+# v11.1 CRÍTICO FIX: Reducido de 8192 a 4096 para resolver latencia extrema (221s → ~30s esperado).
+# Con 8192 tokens, Ollama en CPU requería >3 minutos por inferencia. 4096 es suficiente para RAG.
+OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX",     "4096"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "2048"))
+# PERFORMANCE OPTIMIZATION: Usando modelo ligero para mejor rendimiento
+# qwen2.5:1.5b ofrece 16x mejor rendimiento que qwen3:8b
+LLM_FAST_MODEL = os.getenv("LLM_FAST_MODEL", "qwen2.5:1.5b")
+LLM_THINKER_MODEL = os.getenv("LLM_THINKER_MODEL", LLM_FAST_MODEL)
+LLM_CODER_MODEL = os.getenv("LLM_CODER_MODEL", "qwen2.5-coder:3b")  # v11.9.0: 3B para CPU-only (2.4x más rápido que 7B, ~2.5GB RAM)
+LLM_GATEWAY_REALTIME_MODEL = os.getenv("LLM_GATEWAY_REALTIME_MODEL", LLM_FAST_MODEL)
+LLM_GATEWAY_BATCH_MODEL = os.getenv("LLM_GATEWAY_BATCH_MODEL", LLM_MODEL_NAME)
+LLM_BATCH_ENABLED = os.getenv("LLM_BATCH_ENABLED", "false").lower() == "true"
+LLM_BATCH_BACKEND_URL = os.getenv("LLM_BATCH_BACKEND_URL", "http://localhost:11434/api/chat")
+# v11.5: Concurrencia serializada para evitar saturación de CPU (Gridlock de núcleos)
+LLM_REALTIME_MAX_CONCURRENCY = int(os.getenv("LLM_REALTIME_MAX_CONCURRENCY", "1"))
+LLM_BATCH_MAX_CONCURRENCY = int(os.getenv("LLM_BATCH_MAX_CONCURRENCY", "1"))
+LLM_GATEWAY_REALTIME_TIMEOUT_SECONDS = int(os.getenv("LLM_GATEWAY_REALTIME_TIMEOUT_SECONDS", "600"))
+LLM_GATEWAY_BATCH_TIMEOUT_SECONDS = int(os.getenv("LLM_GATEWAY_BATCH_TIMEOUT_SECONDS", "600"))
 
 # v10.5: Optimización de Concurrencia
-LLM_CONCURRENCY = 2 # Allow 1 chat stream + 1 overhead/background call
-MAX_LLM_RETRIES = 3
+# v11.5: Capacidad total de inferencia de la instancia. 1 asegura modo Serial estricto.
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1")) 
+MAX_LLM_RETRIES = 2
 COGNITIVE_MODE = os.getenv("COGNITIVE_MODE", "balanced").lower() # fast, balanced, high_precision
 
 # Database Configuration
-CHROMA_DB_PATH = "data/chroma_db"
+CHROMA_DB_PATH = os.path.join(DATA_DIR, "chroma_db")
+LIGHTRAG_DB_PATH = os.path.join(DATA_DIR, "lightrag_db")
+LIGHTRAG_ENABLED = os.getenv("LIGHTRAG_ENABLED", "true").lower() == "true"
 
 # Agent Configuration
 POLLING_INTERVAL_SECONDS = 86400  # 1 day
@@ -87,3 +125,20 @@ ALLOWED_EVOLUTION_MODULES = ["utils.py", "text_utils.py", "content_sanitizer.py"
 # Módulos cuya firma de función o estructura de respuesta es intocable
 IMMUTABLE_STRUCTURE_MODULES = ["content_sanitizer.py", "sanitizer.py", "schemas.py"]
 EVOLUTION_ERROR_THRESHOLD = 3 # Mínimo de errores para activar evolución proactiva
+
+# ── Auto Git Versioning (Single-user local) ───────────────────────
+ENABLE_AUTO_GIT_VERSIONING = os.getenv("ENABLE_AUTO_GIT_VERSIONING", "true").lower() == "true"
+
+# ── Distillation Tuning (v13.8.16: Estrategia Dual-Cloud) ─────────
+# Reasoning → Groq Llama 3.3 70B  (razonamiento técnico profundo)
+# General   → Gemini 2.0 Flash     (síntesis y conocimiento general)
+# Creative  → Gemini 2.0 Flash     (creatividad, sin fallback local)
+DISTILL_MODEL_REASONING = os.getenv("DISTILL_MODEL_REASONING", "llama-3.3-70b-versatile")
+DISTILL_MODEL_GENERAL   = os.getenv("DISTILL_MODEL_GENERAL",   "gemini-2.0-flash")
+DISTILL_MODEL_CREATIVE  = os.getenv("DISTILL_MODEL_CREATIVE",  "gemini-2.0-flash")
+DISTILL_MAX_CONCURRENCY = int(os.getenv("DISTILL_MAX_CONCURRENCY", "1"))
+DISTILL_MASTER_TIMEOUT_SECONDS = int(os.getenv("DISTILL_MASTER_TIMEOUT_SECONDS", "300"))
+
+# ── External API Keys (opcional) ───────────────────────────────────
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")

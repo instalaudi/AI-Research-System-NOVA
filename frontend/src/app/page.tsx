@@ -1,18 +1,19 @@
 "use client";
-import React, { useState, useEffect } from "react";
-import { Terminal, Search, BookOpen, Activity, Send, Database, Cpu, LayoutDashboard, CheckCircle, AlertCircle, Clock, Paperclip, Mic, X, Image as ImageIcon, BarChart as BarChartIcon, TrendingUp, FileCode, Copy, Check, Lock, User as UserIcon, ChevronRight, ChevronDown, ExternalLink, Shield, Volume2, VolumeX, Menu } from "lucide-react";
+import ControlPanel from "@/components/ControlPanel";
 import KnowledgeBrowser from "@/components/KnowledgeBrowser";
-import ResearchSession from "@/components/ResearchSession";
 import KnowledgeGraph from "@/components/KnowledgeGraph";
-import PremiumCalculator from "@/components/PremiumCalculator";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Cell } from 'recharts';
+import ProjectManager from "@/components/ProjectManager";
+import ResearchSession from "@/components/ResearchSession";
+import { apiFetch, getBaseUrl } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
+import { Activity, AlertCircle, BarChart as BarChartIcon, BookOpen, Camera, Check, CheckCircle, Clock, Copy, Cpu, Database, FileCode, Lock, Menu, Mic, Paperclip, Search, Send, Shield, SlidersHorizontal, Terminal, TrendingUp, User as UserIcon, Volume2, VolumeX, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import React, { useEffect, useState } from "react";
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { apiFetch } from "@/lib/api";
-import { useAuth } from "@/lib/AuthContext";
-import { useRouter } from "next/navigation";
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import remarkGfm from 'remark-gfm';
 
 /**
  * Intelligent Intent Classifier for Chat Messages
@@ -66,6 +67,7 @@ function classifyIntent(text: string, hasAttachments: boolean): { intent: "query
         /^aprende\s+(sobre|de|acerca)/i,
         /^busca\s+(sobre|acerca|informaci[oó]n)/i,
         /^analiza\s+/i,
+        /^analisa\s+/i,
         /^explora\s+/i,
         /^research\s+/i,
         /^learn\s+about\s+/i,
@@ -99,7 +101,11 @@ function classifyIntent(text: string, hasAttachments: boolean): { intent: "query
     }
 
     // 5. Default: QUERY (safer than accidentally launching research)
-    return { intent: "query", cleanQuery: text.trim() };
+    const cleaned = text.trim();
+    if (!cleaned && hasAttachments) {
+        return { intent: "query", cleanQuery: "Analiza este archivo adjunto" };
+    }
+    return { intent: "query", cleanQuery: cleaned };
 }
 
 export default function Home() {
@@ -108,6 +114,7 @@ export default function Home() {
 
     const [activeTab, setActiveTab] = useState("chat");
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [showHelpModal, setShowHelpModal] = useState(false);
     const [messages, setMessages] = useState<{ role: 'ai' | 'user', text: string, images?: string[] }[]>([]);
     
     const [inputValue, setInputValue] = useState("");
@@ -121,10 +128,10 @@ export default function Home() {
                 setMessages(JSON.parse(savedMessages));
             } catch (e) {
                 console.error("Failed to parse saved messages", e);
-                setMessages([{ role: "ai", text: "Hola. Soy tu sistema de investigación autónoma. 🧠\n\n📖 Para consultar lo que ya sé, pregúntame directamente (ej: '¿qué sabes de astronomía?' o 'dime qué aprendiste')\n\n🔬 Para investigar algo nuevo, escribe: 'investiga [tema]'\n\n¿Cómo puedo ayudarte?" }]);
+                setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
             }
         } else {
-            setMessages([{ role: "ai", text: "Hola. Soy tu sistema de investigación autónoma. 🧠\n\n📖 Para consultar lo que ya sé, pregúntame directamente (ej: '¿qué sabes de astronomía?' o 'dime qué aprendiste')\n\n🔬 Para investigar algo nuevo, escribe: 'investiga [tema]'\n\n¿Cómo puedo ayudarte?" }]);
+            setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
         }
     }, []);
 
@@ -153,7 +160,8 @@ export default function Home() {
         "Analyzer": "idle",
         "Critic": "idle",
         "Verifier": "idle",
-        "Librarian": "idle"
+        "Librarian": "idle",
+        "Browser": "idle"
     });
     const [realtimeLogs, setRealtimeLogs] = useState<any[]>([]);
     const [knowledgeEntries, setKnowledgeEntries] = useState<any[]>([]);
@@ -165,6 +173,8 @@ export default function Home() {
     const [volume, setVolume] = useState(0);
     const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+    const [chatMode, setChatMode] = useState<'auto' | 'chat' | 'research' | 'build' | 'knowledge'>('auto');
+    const [streamingIntent, setStreamingIntent] = useState<string | null>(null);
     const [pendingResearch, setPendingResearch] = useState<string | null>(null);
     const audioContextRef = React.useRef<AudioContext | null>(null);
     const analyserRef = React.useRef<AnalyserNode | null>(null);
@@ -173,6 +183,59 @@ export default function Home() {
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
     const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
     const messagesEndRef = React.useRef<HTMLDivElement>(null);
+    
+    // v13.7.2: Audio Streaming Queue (Fase 2)
+    const audioQueueRef = React.useRef<string[]>([]);
+    const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+    const playNextAudio = React.useCallback(() => {
+        if (audioQueueRef.current.length === 0) {
+            setIsAudioPlaying(false);
+            return;
+        }
+        setIsAudioPlaying(true);
+        const key = audioQueueRef.current.shift();
+        if (!key) return;
+        
+        const audioUrl = `${getBaseUrl()}/chat/audio/${key}`;
+        const audio = new Audio(audioUrl);
+        audio.onended = () => playNextAudio();
+        audio.onerror = () => playNextAudio();
+        audio.play().catch(e => {
+            console.error("Audio playback error:", e);
+            playNextAudio();
+        });
+    }, []);
+
+    const queueAudio = React.useCallback((key: string) => {
+        if (!voiceEnabled) return;
+        audioQueueRef.current.push(key);
+        if (!isAudioPlaying) {
+            playNextAudio();
+        }
+    }, [voiceEnabled, isAudioPlaying, playNextAudio]);
+
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const customEvent = event as CustomEvent<{ text?: string }>;
+            const injectedText = customEvent.detail?.text;
+            if (!injectedText) return;
+            setInputValue(prev => (prev ? `${prev}\n\n${injectedText}` : injectedText));
+            setActiveTab("chat");
+            textareaRef.current?.focus();
+        };
+        window.addEventListener("nova:inject-prompt", handler as EventListener);
+        return () => window.removeEventListener("nova:inject-prompt", handler as EventListener);
+    }, []);
+
+    // Cleanup recording resources on unmount
+    useEffect(() => {
+        return () => {
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -279,11 +342,13 @@ export default function Home() {
     }
 
     const handleSendMessage = async () => {
-        if ((!inputValue.trim() && selectedImages.length === 0) || isLoading) return;
+        if ((!inputValue.trim() && selectedImages.length === 0 && selectedFiles.length === 0) || isLoading) return;
 
         const userText = inputValue.trim();
         const currentImages = [...selectedImages];
-        setMessages(prev => [...prev, { role: "user", text: userText, images: currentImages }]);
+        const hasAttachments = currentImages.length > 0 || selectedFiles.length > 0;
+        const displayText = userText || (currentImages.length > 0 ? "Imagen adjunta" : selectedFiles.length > 0 ? "Archivo adjunto" : "Mensaje enviado");
+        setMessages(prev => [...prev, { role: "user", text: displayText, images: currentImages }]);
         setInputValue("");
         setIsLoading(true);
         setSelectedImages([]); // Clear immediately to provide feedback
@@ -327,8 +392,15 @@ export default function Home() {
         }
         // -----------------------------------------------------------
 
-        const { intent, cleanQuery } = classifyIntent(userText, currentImages.length > 0 || selectedFiles.length > 0);
+        const { intent, cleanQuery } = classifyIntent(userText, hasAttachments);
         const isQuery = intent === "query";
+        const payload = {
+            query: cleanQuery,
+            images: currentImages,
+            files: selectedFiles,
+            mode: chatMode
+        };
+        console.debug("Sending chat payload", { payload, intent, hasAttachments, chatMode });
 
         try {
             if (isQuery) {
@@ -338,11 +410,7 @@ export default function Home() {
                 if (voiceEnabled) {
                     const response = await apiFetch("/query/voice", {
                         method: "POST",
-                        json: { 
-                            query: cleanQuery,
-                            images: currentImages,
-                            files: selectedFiles
-                        }
+                        json: payload
                     });
 
                     if (!response.ok) {
@@ -368,11 +436,7 @@ export default function Home() {
 
                 const response = await apiFetch("/query/stream", {
                     method: "POST",
-                    json: { 
-                        query: cleanQuery,
-                        images: currentImages,
-                        files: selectedFiles
-                    }
+                    json: payload
                 });
 
                 if (!response.ok) {
@@ -408,6 +472,11 @@ export default function Home() {
                                             };
                                             return newMsg;
                                         });
+                                        
+                                        // Auto-switch to Projects tab when a project is created
+                                        if (data.text.includes("Ve a la pestaña 'Proyectos'")) {
+                                            setActiveTab("projects");
+                                        }
                                     } else if (data.type === 'fallback') {
                                         setMessages(prev => {
                                             const newMsg = [...prev];
@@ -441,6 +510,15 @@ export default function Home() {
                                             };
                                             return newMsg;
                                         });
+                                    } else if (data.type === 'metadata') {
+                                        // Update intent if provided in metadata
+                                        if (data.intent) {
+                                            setStreamingIntent(data.intent);
+                                            console.debug("Intent updated from metadata:", data.intent);
+                                        }
+                                    } else if (data.type === 'audio') {
+                                        // v13.7.2: Recibir fragmento de voz en tiempo real
+                                        queueAudio(data.key);
                                     } else if (data.type === 'observation') {
                                         setMessages(prev => {
                                             const newMsg = [...prev];
@@ -476,10 +554,12 @@ export default function Home() {
                 }
             }
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : "Error de conexión con el backend. ¿Está el servidor en marcha en http://localhost:8000?";
+            console.error("Query send failed", error, { payload, intent, hasAttachments });
+            const errorMessage = error instanceof Error ? error.message : "Error de conexión con el backend. ¿Está el servidor en marcha?";
             setMessages(prev => [...prev, { role: "ai", text: errorMessage }]);
         } finally {
             setIsLoading(false);
+            setStreamingIntent(null);
             setSelectedFiles([]);
         }
     };
@@ -505,7 +585,7 @@ export default function Home() {
         if (!files) return;
 
         Array.from(files).forEach(file => {
-            const isImage = file.type.startsWith('image/');
+            const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|gif|bmp|webp|svg)$/i.test(file.name);
             const isBinary = file.type === 'application/pdf' || file.type === 'application/octet-stream';
             const reader = new FileReader();
 
@@ -513,8 +593,8 @@ export default function Home() {
                 if (isImage) {
                     setSelectedImages(prev => [...prev, reader.result as string]);
                 } else if (isBinary) {
-                    // FIX-VISION: Archivos binarios (PDF) — guardar como base64 con marcador
-                    setSelectedFiles(prev => [...prev, { name: file.name, content: `[Archivo binario: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]` }]);
+                    // Guardar como Data URL (base64) para que el backend reciba el contenido real
+                    setSelectedFiles(prev => [...prev, { name: file.name, content: reader.result as string }]);
                 } else {
                     setSelectedFiles(prev => [...prev, { name: file.name, content: reader.result as string }]);
                 }
@@ -523,8 +603,7 @@ export default function Home() {
             if (isImage) {
                 reader.readAsDataURL(file);
             } else if (isBinary) {
-                // Solo necesitamos disparar onloadend, no el contenido real
-                reader.readAsArrayBuffer(file);
+                reader.readAsDataURL(file);
             } else {
                 reader.readAsText(file);
             }
@@ -734,10 +813,17 @@ export default function Home() {
                     />
                     <NavItem
                         icon={<Cpu size={20} />}
-                        label="Herramientas"
+                        label="Proyectos"
                         active={activeTab === "tools"}
                         onClick={() => { setActiveTab("tools"); setIsMobileMenuOpen(false); }}
-                        title="Calculadora Premium y Herramientas"
+                        title="Proyectos Generados por NOVA"
+                    />
+                    <NavItem
+                        icon={<SlidersHorizontal size={20} />}
+                        label="Panel de control"
+                        active={activeTab === "control"}
+                        onClick={() => { setActiveTab("control"); setIsMobileMenuOpen(false); }}
+                        title="Automatización y recursos"
                     />
                 </nav>
 
@@ -794,22 +880,32 @@ export default function Home() {
                             {activeTab === "chat" ? "AI Research Assistant" :
                                 activeTab === "research" ? "Active Research Pipelines" :
                                     activeTab === "knowledge" ? "Knowledge Base Explorer" :
-                                        activeTab === "dashboard" ? "System Insights & User Metrics" : 
-                                            activeTab === "tools" ? "Advanced System Tools" : "Agent Orchestration"}
+                                        activeTab === "dashboard" ? "System Insights & User Metrics" :
+                                            activeTab === "tools" ? "Proyectos Generados" :
+                                                activeTab === "control" ? "Panel de control" : "Agent Orchestration"}
                         </h2>
                         {activeTab === "chat" && (
-                            <button 
-                                onClick={() => {
-                                    if (confirm("¿Borrar todo el historial del chat?")) {
-                                        const initialMsg = [{ role: "ai" as const, text: "Hola. Soy tu sistema de investigación autónoma. 🧠\n\n📖 Para consultar lo que ya sé, pregúntame directamente (ej: '¿qué sabes de astronomía?' o 'dime qué aprendiste')\n\n🔬 Para investigar algo nuevo, escribe: 'investiga [tema]'\n\n¿Cómo puedo ayudarte?" }];
-                                        setMessages(initialMsg);
-                                        localStorage.setItem("nova_chat_history", JSON.stringify(initialMsg));
-                                    }
-                                }}
-                                className="ml-4 px-3 py-1 bg-red-600/10 border border-red-500/20 rounded-full text-[9px] font-bold text-red-500 hover:bg-red-600/20 transition-all uppercase tracking-tighter"
-                            >
-                                Limpiar Chat
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => {
+                                        if (confirm("¿Borrar todo el historial del chat?")) {
+                                            const initialMsg = [{ role: "ai" as const, text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }];
+                                            setMessages(initialMsg);
+                                            localStorage.setItem("nova_chat_history", JSON.stringify(initialMsg));
+                                        }
+                                    }}
+                                    className="px-3 py-1 bg-red-600/10 border border-red-500/20 rounded-full text-[9px] font-bold text-red-500 hover:bg-red-600/20 transition-all uppercase tracking-tighter"
+                                >
+                                    Limpiar Chat
+                                </button>
+                                <button 
+                                    onClick={() => setShowHelpModal(true)}
+                                    className="px-3 py-1 bg-blue-600/10 border border-blue-500/20 rounded-full text-[9px] font-bold text-blue-400 hover:bg-blue-600/20 transition-all uppercase tracking-tighter flex items-center gap-1"
+                                >
+                                    <AlertCircle size={10} />
+                                    Guía de Uso
+                                </button>
+                            </div>
                         )}
                     </div>
                     <div className="flex items-center gap-6">
@@ -834,9 +930,38 @@ export default function Home() {
                                     <ChatMessage key={i} role={msg.role} text={msg.text} images={msg.images} />
                                 ))}
                                 {isLoading && (
-                                    <div className="flex justify-start">
-                                        <div className="bg-[#161616] p-3 rounded-xl border border-gray-800 text-xs text-gray-500 animate-pulse">
-                                            IA pensando...
+                                    <div className="flex justify-start items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-500">
+                                        <div className="relative">
+                                            <div className="w-10 h-10 bg-[#161616] rounded-xl border border-gray-800 flex items-center justify-center overflow-hidden">
+                                                <div className={`absolute inset-0 opacity-20 animate-pulse ${
+                                                    streamingIntent === 'RESEARCH' ? 'bg-amber-500' : 
+                                                    streamingIntent === 'PROJECT_BUILD' ? 'bg-purple-500' : 
+                                                    'bg-blue-500'
+                                                }`} />
+                                                <Activity size={18} className={`animate-pulse ${
+                                                    streamingIntent === 'RESEARCH' ? 'text-amber-500' : 
+                                                    streamingIntent === 'PROJECT_BUILD' ? 'text-purple-500' : 
+                                                    'text-blue-500'
+                                                }`} />
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-0.5">
+                                                {streamingIntent || "NOVA CORE"}
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm text-gray-300 font-medium italic">
+                                                    {streamingIntent === 'RESEARCH' ? "Desplegando Swarm de Agentes..." :
+                                                     streamingIntent === 'PROJECT_BUILD' ? "Construyendo Arquitectura..." :
+                                                     streamingIntent === 'KNOWLEDGE' ? "Consultando Base de Datos..." :
+                                                     "Sincronizando Omni-Kernel..."}
+                                                </span>
+                                                <div className="flex gap-1">
+                                                    <span className="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                                    <span className="w-1 h-1 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                                    <span className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -881,6 +1006,50 @@ export default function Home() {
                                         </div>
                                     )}
                                 </div>
+
+                                {/* v13.7.0: Multi-Mode Selector Bar */}
+                                <div className="flex items-center gap-2 mb-3 px-1 overflow-x-auto scrollbar-hide no-scrollbar pb-1">
+                                    <ModePill 
+                                        active={chatMode === 'auto'} 
+                                        onClick={() => setChatMode('auto')} 
+                                        icon={<Activity size={12} />} 
+                                        label="Auto" 
+                                        color="blue"
+                                        tooltip="Inteligencia Adaptativa"
+                                    />
+                                    <ModePill 
+                                        active={chatMode === 'chat'} 
+                                        onClick={() => setChatMode('chat')} 
+                                        icon={<Terminal size={12} />} 
+                                        label="Chat" 
+                                        color="green"
+                                        tooltip="Solo conversación (Seguro)"
+                                    />
+                                    <ModePill 
+                                        active={chatMode === 'research'} 
+                                        onClick={() => setChatMode('research')} 
+                                        icon={<Search size={12} />} 
+                                        label="Investigación" 
+                                        color="amber"
+                                        tooltip="Búsqueda Autónoma Web"
+                                    />
+                                    <ModePill 
+                                        active={chatMode === 'build'} 
+                                        onClick={() => setChatMode('build')} 
+                                        icon={<Cpu size={12} />} 
+                                        label="Proyectos" 
+                                        color="purple"
+                                        tooltip="Construcción de Software"
+                                    />
+                                    <ModePill 
+                                        active={chatMode === 'knowledge'} 
+                                        onClick={() => setChatMode('knowledge')} 
+                                        icon={<BookOpen size={12} />} 
+                                        label="Conocimiento" 
+                                        color="cyan"
+                                        tooltip="Consulta de Base Local (RAG)"
+                                    />
+                                </div>
                                 
                                 <input
                                     type="file"
@@ -915,6 +1084,36 @@ export default function Home() {
                                             title={voiceEnabled ? "Voz activada — NOVA hablará las respuestas" : "Voz desactivada"}
                                         >
                                             {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                                        </button>
+                                        <button 
+                                            onClick={async () => {
+                                                try {
+                                                    const btn = document.getElementById('webcam-btn');
+                                                    if (btn) btn.classList.add('animate-pulse', 'text-green-400');
+                                                    const res = await apiFetch('/api/vision/webcam/analyze', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ prompt: 'Describe en detalle y en español lo que ves en esta imagen de la cámara web. Sé específico sobre objetos, personas, colores y ambiente.' })
+                                                    });
+                                                    const data = await res.json();
+                                                    if (data.analysis) {
+                                                        setMessages((prev: any[]) => [...prev, 
+                                                            { role: 'user', content: '📷 [Captura de Webcam]' },
+                                                            { role: 'assistant', content: `🎥 **Análisis de Webcam** (${data.resolution}):\n\n${data.analysis}` }
+                                                        ]);
+                                                    }
+                                                } catch (e: any) {
+                                                    setMessages((prev: any[]) => [...prev, { role: 'assistant', content: `⚠️ No pude acceder a la cámara: ${e.message}` }]);
+                                                } finally {
+                                                    const btn = document.getElementById('webcam-btn');
+                                                    if (btn) btn.classList.remove('animate-pulse', 'text-green-400');
+                                                }
+                                            }}
+                                            id="webcam-btn"
+                                            className="p-2 text-gray-500 hover:text-blue-400 transition-colors"
+                                            title="Capturar y analizar webcam"
+                                        >
+                                            <Camera size={20} />
                                         </button>
                                     </div>
                                     
@@ -1018,12 +1217,14 @@ export default function Home() {
                     )}
 
                     {activeTab === "tools" && (
-                        <div className="flex flex-col items-center justify-center h-full space-y-8">
-                            <div className="text-center max-w-lg mb-4">
-                                <h3 className="text-2xl font-bold text-white mb-2">Omni-Tools: Premium Calculator</h3>
-                                <p className="text-gray-500 text-sm">Esta es una demostración de mi capacidad para construir herramientas de alta precisión con interfaces modernas y funcionales.</p>
-                            </div>
-                            <PremiumCalculator />
+                        <div className="h-full overflow-y-auto pr-4 scrollbar-hide">
+                            <ProjectManager />
+                        </div>
+                    )}
+
+                    {activeTab === "control" && (
+                        <div className="h-full overflow-y-auto pr-4 scrollbar-hide">
+                            <ControlPanel />
                         </div>
                     )}
                 </div>
@@ -1038,7 +1239,9 @@ export default function Home() {
                         <AgentStatus name="Explorer" status={agentStates["Explorer"] as any} />
                         <AgentStatus name="Analyzer" status={agentStates["Analyzer"] as any} />
                         <AgentStatus name="Critic" status={agentStates["Critic"] as any} />
+                        <AgentStatus name="Verifier" status={agentStates["Verifier"] as any} />
                         <AgentStatus name="Librarian" status={agentStates["Librarian"] as any} />
+                        <AgentStatus name="Browser" status={agentStates["Browser"] as any} />
                     </div>
                 </div>
 
@@ -1065,18 +1268,140 @@ export default function Home() {
                                 {React.createElement('div', {
                                     className: "bg-blue-600 h-full progress-bar-fill",
                                     style: { 
-                                        "--progress-width": `${knowledgeEntries.length > 0 ? (knowledgeEntries.reduce((acc: number, curr: any) => acc + (curr.confidence_score ?? curr.score ?? 0), 0) / knowledgeEntries.length * 100).toFixed(0) : 0}%` 
+                                        "--progress-width": `${systemStats?.knowledge?.quality_ratio !== undefined ? (systemStats.knowledge.quality_ratio * 100).toFixed(0) : 0}%` 
                                     } as React.CSSProperties
                                 })}
                         </div>
                         <p className="text-[10px] text-gray-500 mt-2">
-                            {knowledgeEntries.length > 0
-                                ? `${(knowledgeEntries.reduce((acc, curr) => acc + (curr.confidence_score ?? curr.score ?? 0), 0) / knowledgeEntries.length * 100).toFixed(0)}% del conocimiento procesado es de alta calidad.`
-                                : "Aún no hay datos de calidad procesados."}
+                            {systemStats?.knowledge?.quality_ratio !== undefined
+                                ? `${(systemStats.knowledge.quality_ratio * 100).toFixed(0)}% del conocimiento procesado es de alta calidad.`
+                                : "Sincronizando métricas de calidad..."}
                         </p>
                     </div>
                 </div>
             </aside>
+
+            {/* Help Modal Overlay */}
+            {showHelpModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-[#111] border border-gray-800 w-full max-w-2xl max-h-[85vh] rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in duration-300">
+                        {/* Modal Header */}
+                        <div className="p-6 border-b border-gray-800 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-blue-600 rounded-2xl shadow-lg shadow-blue-600/20">
+                                    <BookOpen size={20} className="text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-white tracking-tight">Manual de Operaciones NOVA</h3>
+                                    <p className="text-[10px] text-blue-400 uppercase tracking-widest font-bold">Neural Autonomous Versatile Agent v13.5</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setShowHelpModal(false)}
+                                className="p-2 text-gray-500 hover:text-white hover:bg-white/5 rounded-full transition-all"
+                                aria-label="Cerrar guía"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        
+                        {/* Modal Body */}
+                        <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-hide">
+                            {/* Interaction Modes */}
+                            <section>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <Search size={16} className="text-blue-400" />
+                                    <h4 className="text-blue-400 font-bold uppercase tracking-[0.2em] text-[11px]">Modos de Interacción</h4>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="bg-[#161616] p-5 rounded-3xl border border-gray-800 hover:border-blue-500/30 transition-all group">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-lg">📖</span>
+                                            <p className="font-bold text-white group-hover:text-blue-400 transition-colors">Consulta (RAG)</p>
+                                        </div>
+                                        <p className="text-gray-500 text-xs leading-relaxed">Habla con total libertad para preguntar sobre lo que NOVA ya sabe o ha procesado en sus bases de datos y documentos.</p>
+                                    </div>
+                                    <div className="bg-[#161616] p-5 rounded-3xl border border-gray-800 hover:border-indigo-500/30 transition-all group">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-lg">🔬</span>
+                                            <p className="font-bold text-white group-hover:text-indigo-400 transition-colors">Investigación Web</p>
+                                        </div>
+                                        <p className="text-gray-500 text-xs leading-relaxed">Escribe <strong>&quot;investiga [tema]&quot;</strong> para desplegar agentes autónomos que navegarán por internet para buscar datos frescos.</p>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* Core Capabilities */}
+                            <section>
+                                <div className="flex items-center gap-2 mb-6">
+                                    <Activity size={16} className="text-amber-400" />
+                                    <h4 className="text-amber-400 font-bold uppercase tracking-[0.2em] text-[11px]">Capacidades Especiales</h4>
+                                </div>
+                                <div className="space-y-6">
+                                    <div className="flex gap-4">
+                                        <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center flex-shrink-0 text-xl border border-amber-500/20">👁️</div>
+                                        <div>
+                                            <p className="font-bold text-white mb-1">Ojos de NOVA (Visión de Escritorio)</p>
+                                            <p className="text-gray-500 text-xs leading-relaxed">Dile <strong>&quot;mira mi pantalla&quot;</strong> o <strong>&quot;¿qué ves en la imagen?&quot;</strong>. NOVA puede tomar capturas de tu escritorio y analizar interfaces, código o errores visualmente.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center flex-shrink-0 text-xl border border-blue-500/20">🎙️</div>
+                                        <div>
+                                            <p className="font-bold text-white mb-1">Voz e Inteligencia Auditiva</p>
+                                            <p className="text-gray-500 text-xs leading-relaxed">Usa el icono del micrófono para dar órdenes por voz. Si activas el icono del altavoz, NOVA te responderá con voz neuronal humana (Kokoro).</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-10 h-10 rounded-2xl bg-green-500/10 flex items-center justify-center flex-shrink-0 text-xl border border-green-500/20">🛠️</div>
+                                        <div>
+                                            <p className="font-bold text-white mb-1">Project Manager Autónomo</p>
+                                            <p className="text-gray-500 text-xs leading-relaxed">Pídele que desarrolle aplicaciones o scripts. NOVA creará los archivos reales en tu disco y podrás gestionarlos en la pestaña <strong>Proyectos</strong>.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* Technical Tools */}
+                            <section>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <Terminal size={16} className="text-green-400" />
+                                    <h4 className="text-green-400 font-bold uppercase tracking-[0.2em] text-[11px]">Caja de Herramientas (JSON Tools)</h4>
+                                </div>
+                                <p className="text-gray-500 text-xs mb-6 bg-white/5 p-4 rounded-2xl border border-white/5">NOVA decide qué herramienta usar según tu necesidad. Por seguridad, siempre te pedirá confirmación antes de realizar acciones críticas.</p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="p-3 bg-black/40 rounded-xl border border-gray-800 flex flex-col gap-1">
+                                        <code className="text-blue-400 font-bold text-[10px]">terminal</code>
+                                        <span className="text-gray-600 text-[9px] uppercase font-bold">Comandos de Sistema</span>
+                                    </div>
+                                    <div className="p-3 bg-black/40 rounded-xl border border-gray-800 flex flex-col gap-1">
+                                        <code className="text-indigo-400 font-bold text-[10px]">browser</code>
+                                        <span className="text-gray-600 text-[9px] uppercase font-bold">Navegación Web Profunda</span>
+                                    </div>
+                                    <div className="p-3 bg-black/40 rounded-xl border border-gray-800 flex flex-col gap-1">
+                                        <code className="text-amber-400 font-bold text-[10px]">vision</code>
+                                        <span className="text-gray-600 text-[9px] uppercase font-bold">Captura y Control de OS</span>
+                                    </div>
+                                    <div className="p-3 bg-black/40 rounded-xl border border-gray-800 flex flex-col gap-1">
+                                        <code className="text-green-400 font-bold text-[10px]">gws</code>
+                                        <span className="text-gray-600 text-[9px] uppercase font-bold">Google Workspace Sync</span>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* Pro-Tip Footer */}
+                            <div className="mt-8 p-6 bg-gradient-to-br from-blue-600/10 to-indigo-600/10 rounded-[2rem] border border-blue-500/20 text-center relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 p-2 text-blue-500/20 group-hover:text-blue-500/40 transition-colors">
+                                    <Activity size={40} />
+                                </div>
+                                <p className="text-xs text-gray-300 leading-relaxed relative z-10">
+                                    &quot;La verdadera potencia de NOVA reside en su capacidad de **Autocorrección**. Si algo falla, pídeme que analice los logs o que intente un enfoque diferente.&quot;
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -1168,10 +1493,18 @@ function CodeBlock({ language, value }: { language: string, value: string }) {
         setTimeout(() => setCopied(false), 2000);
     };
 
+    const displayLanguage = (language || 'code').toLowerCase();
+    const normalizedLanguage = 
+        displayLanguage === 'dash' ? 'BASH' : 
+        displayLanguage === 'bash' ? 'BASH' : 
+        displayLanguage === 'sh' ? 'BASH' : 
+        displayLanguage === 'powershell' ? 'PS' : 
+        displayLanguage.toUpperCase();
+
     if (isShort && !language) {
         return (
             <code className="bg-[#0d0d0d] border border-gray-800 px-2 py-1 rounded-md text-blue-400 font-mono text-xs mx-1 inline-block shadow-sm">
-                {value}
+                {value === 'undefined' ? '' : value}
             </code>
         );
     }
@@ -1180,7 +1513,7 @@ function CodeBlock({ language, value }: { language: string, value: string }) {
         <div className="relative my-4 group rounded-xl overflow-hidden border border-gray-800 bg-[#0d0d0d] shadow-2xl">
             <div className="flex items-center justify-between px-4 py-1.5 bg-[#161616] border-b border-gray-800">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 font-mono">
-                    {language || 'code'}
+                    {normalizedLanguage}
                 </span>
                 <button
                     onClick={handleCopy}
@@ -1365,28 +1698,28 @@ function UserDashboard({ stats, failures, onClearFailed }: { stats: any, failure
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
                     label="Artículos Analizados"
-                    value={stats.knowledge.total_entries}
+                    value={stats?.knowledge?.total_entries ?? 0}
                     icon={<BookOpen size={20} />}
                     color="blue"
                     description="Conocimiento curado"
                 />
                 <StatCard
                     label="Nodos en Grafo"
-                    value={stats.knowledge.total_nodes}
+                    value={stats?.knowledge?.total_nodes ?? 0}
                     icon={<Activity size={20} />}
                     color="purple"
                     description="Red semántica"
                 />
                 <StatCard
                     label="Conexiones"
-                    value={stats.knowledge.total_links}
+                    value={stats?.knowledge?.total_links ?? 0}
                     icon={<Database size={20} />}
                     color="indigo"
                     description="Relaciones autónomas"
                 />
                 <StatCard
                     label="Confianza Promedio"
-                    value={`${(stats.knowledge.avg_confidence * 100).toFixed(0)}%`}
+                    value={`${((stats?.knowledge?.avg_confidence ?? 0) * 100).toFixed(0)}%`}
                     icon={<TrendingUp size={20} />}
                     color="green"
                     description="Calidad de datos"
@@ -1403,36 +1736,36 @@ function UserDashboard({ stats, failures, onClearFailed }: { stats: any, failure
                             <p className="text-gray-500 text-xs mt-1 uppercase tracking-widest font-medium">Distribución de carga de trabajo</p>
                         </div>
                         <div className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/5 rounded-2xl text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
-                            Total: {stats.jobs.total}
+                            Total: {stats?.jobs?.total ?? 0}
                         </div>
                     </div>
                     
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                        <JobMetric label="Completadas con Éxito" count={stats.jobs.completed} color="bg-green-500" total={stats.jobs.total} icon={<CheckCircle size={16} className="text-green-500" />} />
-                        <JobMetric label="En Ejecución" count={stats.jobs.running} color="bg-blue-500" total={stats.jobs.total} icon={<Activity size={16} className="text-blue-500" />} />
-                        <JobMetric label="En Espera" count={stats.jobs.pending} color="bg-gray-500" total={stats.jobs.total} icon={<Clock size={16} className="text-gray-400" />} />
-                        <JobMetric label="Interrupciones/Fallos" count={stats.jobs.failed} color="bg-red-500" total={stats.jobs.total} icon={<AlertCircle size={16} className="text-red-500" />} />
+                        <JobMetric label="Completadas con Éxito" count={stats?.jobs?.completed ?? 0} color="bg-green-500" total={stats?.jobs?.total ?? 0} icon={<CheckCircle size={16} className="text-green-500" />} />
+                        <JobMetric label="En Ejecución" count={stats?.jobs?.running ?? 0} color="bg-blue-500" total={stats?.jobs?.total ?? 0} icon={<Activity size={16} className="text-blue-500" />} />
+                        <JobMetric label="En Espera" count={stats?.jobs?.pending ?? 0} color="bg-gray-500" total={stats?.jobs?.total ?? 0} icon={<Clock size={16} className="text-gray-400" />} />
+                        <JobMetric label="Interrupciones/Fallos" count={stats?.jobs?.failed ?? 0} color="bg-red-500" total={stats?.jobs?.total ?? 0} icon={<AlertCircle size={16} className="text-red-500" />} />
                     </div>
                 </div>
 
                 {/* System Control / Clear Failures */}
                 <div className="lg:col-span-4 flex flex-col gap-6">
-                    <div className={`bg-gradient-to-br border rounded-[2rem] p-8 flex flex-col items-center text-center group transition-all duration-500 ${stats.system?.has_critical ? "from-red-600/20 to-red-600/5 border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.1)]" : (stats.system?.failures_count > 0 ? "from-amber-600/10 to-transparent border-amber-500/20" : "from-gray-800/10 to-transparent border-white/5")}`}>
-                        <div className={`p-4 rounded-2xl mb-6 transition-all duration-500 ${stats.system?.has_critical ? "bg-red-600 text-white shadow-[0_0_40px_rgba(220,38,38,0.5)] animate-pulse" : (stats.system?.failures_count > 0 ? "bg-amber-500 text-white shadow-xl shadow-amber-500/20" : "bg-gray-800/50 text-gray-600")}`}>
+                    <div className={`bg-gradient-to-br border rounded-[2rem] p-8 flex flex-col items-center text-center group transition-all duration-500 ${stats?.system?.has_critical ? "from-red-600/20 to-red-600/5 border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.1)]" : (stats?.system?.failures_count > 0 ? "from-amber-600/10 to-transparent border-amber-500/20" : "from-gray-800/10 to-transparent border-white/5")}`}>
+                        <div className={`p-4 rounded-2xl mb-6 transition-all duration-500 ${stats?.system?.has_critical ? "bg-red-600 text-white shadow-[0_0_40px_rgba(220,38,38,0.5)] animate-pulse" : (stats?.system?.failures_count > 0 ? "bg-amber-500 text-white shadow-xl shadow-amber-500/20" : "bg-gray-800/50 text-gray-600")}`}>
                             <AlertCircle size={32} />
                         </div>
                         <h4 className="text-lg font-bold text-white mb-2">Gestión de Fallos</h4>
                         <p className="text-gray-500 text-xs mb-8">
-                            {stats.system?.failures_count > 0 
+                            {stats?.system?.failures_count > 0 
                                 ? `Detectados ${stats.system.failures_count} fallos de integridad o sistema.` 
                                 : "Purga errores críticos para mantener el Omni-Kernel limpio de basura operativa."}
                         </p>
                         <button 
                             onClick={handleClear}
-                            disabled={stats.jobs.failed === 0}
-                            className={`w-full py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] transition-all duration-300 ${stats.jobs.failed > 0 ? (stats.system?.has_critical ? "bg-red-600 hover:bg-red-700 shadow-red-600/20" : "bg-amber-600 hover:bg-amber-500 shadow-amber-600/20") + " text-white shadow-xl active:scale-95" : "bg-gray-800 text-gray-600 cursor-not-allowed opacity-50"}`}
+                            disabled={(stats?.jobs?.failed ?? 0) === 0}
+                            className={`w-full py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] transition-all duration-300 ${(stats?.jobs?.failed ?? 0) > 0 ? (stats?.system?.has_critical ? "bg-red-600 hover:bg-red-700 shadow-red-600/20" : "bg-amber-600 hover:bg-amber-500 shadow-amber-600/20") + " text-white shadow-xl active:scale-95" : "bg-gray-800 text-gray-600 cursor-not-allowed opacity-50"}`}
                         >
-                            {stats.jobs.failed > 0 ? (stats.system?.has_critical ? "REMEDIACIÓN CRÍTICA (Limpiar)" : "Restablecer Sistema (Limpiar)") : "Sin fallos detectados"}
+                            {(stats?.jobs?.failed ?? 0) > 0 ? (stats?.system?.has_critical ? "REMEDIACIÓN CRÍTICA (Limpiar)" : "Restablecer Sistema (Limpiar)") : "Sin fallos detectados"}
                         </button>
                     </div>
 
@@ -1541,5 +1874,26 @@ function JobMetric({ label, count, color, total, icon }: { label: string, count:
                 })}
             </div>
         </div>
+    );
+}
+
+function ModePill({ active, onClick, icon, label, color, tooltip }: any) {
+    const colors = {
+        blue: active ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'bg-[#161616] text-gray-500 hover:text-blue-400',
+        green: active ? 'bg-green-600 text-white shadow-[0_0_15px_rgba(22,163,74,0.4)]' : 'bg-[#161616] text-gray-500 hover:text-green-400',
+        amber: active ? 'bg-amber-600 text-white shadow-[0_0_15px_rgba(217,119,6,0.4)]' : 'bg-[#161616] text-gray-500 hover:text-amber-400',
+        purple: active ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]' : 'bg-[#161616] text-gray-500 hover:text-purple-400',
+        cyan: active ? 'bg-cyan-600 text-white shadow-[0_0_15px_rgba(8,145,178,0.4)]' : 'bg-[#161616] text-gray-500 hover:text-cyan-400',
+    } as any;
+
+    return (
+        <button
+            onClick={onClick}
+            title={tooltip}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-800/50 text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap ${colors[color]}`}
+        >
+            {icon}
+            <span>{label}</span>
+        </button>
     );
 }

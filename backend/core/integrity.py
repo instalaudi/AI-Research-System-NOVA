@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 import asyncio
 import logging
@@ -64,7 +65,7 @@ async def check_system_integrity():
                 print(f"[INTEGRITY] Error leyendo {rel_path}: {e}")
                 
         if is_corrupted:
-            print(f"[INTEGRITY] ⚠️ CORRUPCIÓN DETECTADA en {rel_path}: {reason}")
+            print(f"[INTEGRITY] [!] CORRUPCIÓN DETECTADA en {rel_path}: {reason}")
             success = await _attempt_repair(target, rel_path, reason)
             if success:
                 corrupted_found.append(rel_path)
@@ -87,29 +88,55 @@ async def check_system_integrity():
         except:
             pass
     else:
-        print("[INTEGRITY] ✅ Todos los archivos críticos están íntegros.")
+        print("[INTEGRITY] [OK] Todos los archivos críticos están íntegros.")
+
+# ── Estado por defecto para archivos de datos regenerables ──────
+_DEFAULT_STATES: dict = {
+    "nova_proactive_state.json": {
+        "messages_today": 0,
+        "last_message_date": None,
+        "last_update_id": 0,
+        "done_today": {},
+        "done_week": {},
+        "notified": [],
+        "queued_messages": [],
+    },
+    "nova_evolution_state.json": {},
+}
+
 
 async def _attempt_repair(target: Path, rel_path: str, reason: str) -> bool:
-    """Intenta restaurar un archivo desde su copia .bak."""
+    """Intenta restaurar un archivo desde su copia .bak o regenerarlo desde estado por defecto."""
     bak_path = target.with_suffix(target.suffix + ".bak")
-    
+
+    # 1. Intentar restaurar desde backup
     if bak_path.exists() and bak_path.stat().st_size > 0:
         try:
-            # Verificar si el backup también está corrupto
             with open(bak_path, 'rb') as f:
                 if b'\x00' in f.read():
-                    print(f"[INTEGRITY] ❌ Backup de {rel_path} también está corrupto.")
-                    return False
-            
-            # Restaurar
-            shutil.copy2(bak_path, target)
-            print(f"[INTEGRITY] ✅ Archivo {rel_path} RESTAURADO con éxito desde backup.")
+                    print(f"[INTEGRITY] [!] Backup de {rel_path} también está corrupto.")
+                else:
+                    shutil.copy2(bak_path, target)
+                    print(f"[INTEGRITY] [OK] Archivo {rel_path} RESTAURADO con éxito desde backup.")
+                    return True
+        except Exception as e:
+            print(f"[INTEGRITY] [!] Falló la restauración de {rel_path}: {e}")
+    else:
+        print(f"[INTEGRITY] [!] No se encontró un backup válido (.bak) para {rel_path}.")
+
+    # 2. Si no hay backup, regenerar desde estado por defecto (solo archivos JSON de datos)
+    filename = target.name
+    if filename in _DEFAULT_STATES:
+        try:
+            default_content = json.dumps(_DEFAULT_STATES[filename], ensure_ascii=False, indent=2)
+            target.write_text(default_content, encoding="utf-8")
+            # Crear también el .bak inicial para futuros arranques
+            bak_path.write_text(default_content, encoding="utf-8")
+            print(f"[INTEGRITY] [FIX] {rel_path} REGENERADO desde estado por defecto (sin pérdida crítica de datos).")
             return True
         except Exception as e:
-            print(f"[INTEGRITY] ❌ Falló la restauración de {rel_path}: {e}")
-    else:
-        print(f"[INTEGRITY] ❌ No se encontró un backup válido (.bak) para {rel_path}.")
-        
+            print(f"[INTEGRITY] [!] No se pudo regenerar {rel_path}: {e}")
+
     return False
 
 async def _notify_by_voice(message: str):

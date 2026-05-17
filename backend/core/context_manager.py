@@ -3,6 +3,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from core.database import SessionLocal, ChatLog
+from core.lightrag_manager import lightrag_manager
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,38 @@ class ContextManager:
     - Persistent Memory Condensation
     - Adaptive Modes (FAST_CHAT, DEEP_RESEARCH, DEBUG_MODE)
     """
-    def __init__(self, max_tokens: int = 4000):
+    def __init__(self, max_tokens: int = 6000):
         self.encoder = tiktoken.get_encoding("cl100k_base")
         self.max_tokens = max_tokens
-        self.system_reserved = 500
+        # v11.9.23: Incrementado de 800 a 1800. La medición real arroja que NOVA_IDENTITY_PROMPT (1335) 
+        # + terminal_skill (300) + framing suman >1600 tokens fijos de overhead.
+        self.system_reserved = 1800 
         self._condensing = False  # FIX #2: Evita tareas de condensación duplicadas
+        
+        # Dynamic context windows based on intent
+        self.context_windows = {
+            "CONVERSATION": 2048,
+            "RESEARCH": 4096, 
+            "DEEP_ANALYSIS": 8192
+        }
+    
+    def _determine_intent(self, query: str, mode: str) -> str:
+        """Determine context intent based on query and mode."""
+        query_lower = query.lower()
+        
+        # Deep analysis indicators
+        if any(word in query_lower for word in ['analizar', 'comparar', 'evaluar', 'investigar', 'estudiar']):
+            return "DEEP_ANALYSIS"
+        
+        # Research indicators  
+        if any(word in query_lower for word in ['buscar', 'encontrar', 'qué es', 'cómo funciona', 'explicar']):
+            return "RESEARCH"
+            
+        # Conversation mode
+        if mode.upper() == "FAST_CHAT":
+            return "CONVERSATION"
+            
+        return "RESEARCH"  # Default
 
     def count_tokens(self, text: str) -> int:
         if not text:
@@ -43,78 +71,139 @@ class ContextManager:
         db_session
     ) -> str:
         """
-        Adaptive Context Assembly based on operational modes:
-        - FAST_CHAT: 90% History, 10% RAG, No Poisoning Check
-        - DEEP_RESEARCH: 20% History, 80% RAG, Strict Filtering
-        - DEBUG_MODE: 0% History, 100% Files/Status
+        Adaptive Context Assembly based on operational modes with dynamic windows:
+        - CONVERSATION: 2048 tokens
+        - RESEARCH: 4096 tokens  
+        - DEEP_ANALYSIS: 8192 tokens
         """
-        mode = mode.upper()
-        if mode not in ["FAST_CHAT", "DEEP_RESEARCH", "DEBUG_MODE"]:
-            mode = "DEEP_RESEARCH" if intent_is_research(mode) else "FAST_CHAT"
-
-        budget = self.max_tokens - self.system_reserved - self.count_tokens(query)
+        intent = self._determine_intent(query, mode)
+        dynamic_max_tokens = self.context_windows.get(intent, self.max_tokens)
         
-        # DEBUG_MODE shortcut
-        if mode == "DEBUG_MODE":
+        # Temporarily adjust max_tokens for this context build
+        original_max = self.max_tokens
+        self.max_tokens = dynamic_max_tokens
+        
+        # v12.1.5: Detección temprana de consultas de resumen de conocimiento
+        summary_keywords = ["qué has aprendido", "que sabes", "resumen de lo aprendido", "quien eres", "cuéntame qué", "conocimiento acumulado"]
+        is_summary_query = any(x in query.lower() for x in summary_keywords)
+
+        try:
+            mode = mode.upper()
+            if mode not in ["FAST_CHAT", "DEEP_RESEARCH", "DEBUG_MODE"]:
+                mode = "DEEP_RESEARCH" if intent_is_research(intent) else "FAST_CHAT"
+
+            budget = self.max_tokens - self.system_reserved - self.count_tokens(query)
+            
+            # DEBUG_MODE shortcut
+            if mode == "DEBUG_MODE":
+                files_tokens = self.count_tokens(files_context)
+                final_files_pos = self.truncate_to_tokens(files_context, budget) if files_tokens > budget else files_context
+                return f"[MODO DEBUG ACTIVO]\n[ARCHIVOS/ESTADO]\n{final_files_pos}"
+
+            # 1. Allocate for files (Top Priority)
             files_tokens = self.count_tokens(files_context)
-            final_files_pos = self.truncate_to_tokens(files_context, budget) if files_tokens > budget else files_context
-            return f"[MODO DEBUG ACTIVO]\n[ARCHIVOS/ESTADO]\n{final_files_pos}"
+            final_files_pos = ""
+            if files_tokens > 0:
+                max_file_tokens = int(budget * 0.5) 
+                if files_tokens > max_file_tokens:
+                    final_files_pos = self.truncate_to_tokens(files_context, max_file_tokens)
+                    budget -= max_file_tokens
+                else:
+                    final_files_pos = files_context
+                    budget -= files_tokens
 
-        # 1. Allocate for files (Top Priority)
-        files_tokens = self.count_tokens(files_context)
-        final_files_pos = ""
-        if files_tokens > 0:
-            max_file_tokens = int(budget * 0.5) 
-            if files_tokens > max_file_tokens:
-                final_files_pos = self.truncate_to_tokens(files_context, max_file_tokens)
-                budget -= max_file_tokens
-            else:
-                final_files_pos = files_context
-                budget -= files_tokens
+            # Mode configurations
+            if mode == "DEEP_RESEARCH":
+                rag_pct, hist_pct = 0.7, 0.3
+                max_docs = 3
+                use_poisoning_protection = True
+            else: # FAST_CHAT (CONVERSATION)
+                rag_pct, hist_pct = 0.0, 1.0
+                max_docs = 0
+                use_poisoning_protection = False
+            
+            # v12.1.5: Sobreescritura para Resúmenes de Aprendizaje
+            # Evita que NOVA alucine con PDFs técnicos (ej: Simplex) al preguntar "¿qué has aprendido?"
+            if is_summary_query:
+                max_docs = 0
+                rag_pct, hist_pct = 0.0, 1.0 # 100% historial + Grafo
 
-        # Mode configurations
-        if mode == "DEEP_RESEARCH":
-            rag_pct, hist_pct = 0.8, 0.2
-            max_docs = 4
-            use_poisoning_protection = True
-        else: # FAST_CHAT
-            rag_pct, hist_pct = 0.2, 0.8
-            max_docs = 2
-            use_poisoning_protection = False
+            rag_allocation = int(budget * rag_pct)
+            history_allocation = budget - rag_allocation
 
-        rag_allocation = int(budget * rag_pct)
-        history_allocation = budget - rag_allocation
+            # 2. RAG Semantic Context (Weighted & Protected)
+            rag_context = await self._get_rag_context(query, max_docs, use_poisoning_protection)
+            final_rag_pos = ""
+            if rag_context:
+                rag_tokens = self.count_tokens(rag_context)
+                if rag_tokens > rag_allocation:
+                    final_rag_pos = self.truncate_to_tokens(rag_context, rag_allocation)
+                    budget -= rag_allocation
+                else:
+                    final_rag_pos = rag_context
+                    budget -= rag_tokens
+                    # Refund leftover budget strictly to history
+                    history_allocation += (rag_allocation - rag_tokens)
 
-        # 2. RAG Semantic Context (Weighted & Protected)
-        rag_context = await self._get_rag_context(query, max_docs, use_poisoning_protection)
-        final_rag_pos = ""
-        if rag_context:
-            rag_tokens = self.count_tokens(rag_context)
-            if rag_tokens > rag_allocation:
-                final_rag_pos = self.truncate_to_tokens(rag_context, rag_allocation)
-                budget -= rag_allocation
-            else:
-                final_rag_pos = rag_context
-                budget -= rag_tokens
-                # Refund leftover budget strictly to history
-                history_allocation += (rag_allocation - rag_tokens)
+            # 3. Episodic Memory (With Condensation)
+            episodic_context = await self._get_history_context(db_session, query, history_allocation, mode, intent)
+            final_history_pos = episodic_context
 
-        # 3. Episodic Memory (With Condensation)
-        episodic_context = await self._get_history_context(db_session, query, history_allocation, mode)
-        final_history_pos = episodic_context
+            # 4. LightRAG (Graph RAG) - Fase Evolutiva v12
+            # Activado en investigación, análisis y consultas de conocimiento.
+            final_graph_pos = ""
+            if intent in ["RESEARCH", "DEEP_ANALYSIS", "KNOWLEDGE", "BOOK_QUERY"]:
+                # v13.6.3: 'naive' por defecto para velocidad (Ryzen 7 optimization). 
+                # Solo usamos 'local' para DEEP_ANALYSIS explícito.
+                rag_mode = "local" if intent == "DEEP_ANALYSIS" else "naive"
 
-        # Assemble final context
-        final_context = f"""
+
+                # v12.1.5: Timeout estricto de 8s (Ryzen 7 safe) para no bloquear el chat
+                try:
+                    graph_raw = await asyncio.wait_for(
+                        lightrag_manager.query(query, mode=rag_mode),
+                        timeout=8.0
+                    )
+                    if graph_raw:
+                        final_graph_pos = self.truncate_to_tokens(graph_raw, 1000)
+                except asyncio.TimeoutError:
+                    logger.warning(f"LightRAG query timed out (5s limit) for: {query[:30]}...")
+                    final_graph_pos = ""
+                except Exception as e:
+                    logger.error(f"LightRAG query failed: {e}")
+                    final_graph_pos = ""
+
+            # Assemble final context (Tiers: 1. Files, 2. History, 3. Vector RAG, 4. Graph RAG)
+            # v12.0.1: Presupuesto dinámico final para el Grafo
+            graph_header = "\n[CAPA DE MEMORIA RELACIONAL (GRAFO)]\n"
+            if final_graph_pos:
+                # Si el grafo devolvió algo, nos aseguramos que quepa en el budget restante 
+                # o lo truncamos agresivamente para no desplazar el historial.
+                budget_remaining = self.max_tokens - self.system_reserved - self.count_tokens(query) \
+                                   - self.count_tokens(final_history_pos) - self.count_tokens(final_rag_pos) \
+                                   - self.count_tokens(final_files_pos) - self.count_tokens(graph_header)
+                
+                if budget_remaining < 200: # Demasiado poco espacio
+                    final_graph_pos = ""
+                else:
+                    max_graph_tokens = min(800, budget_remaining)
+                    final_graph_pos = self.truncate_to_tokens(final_graph_pos, max_graph_tokens)
+
+            final_context = f"""
 [CAPA DE MEMORIA HISTÓRICA]
 {final_history_pos}
 
 [CAPA DE MEMORIA SEMÁNTICA (RAG)]
 {final_rag_pos if final_rag_pos else "Sin contexto recuperado."}
-"""
-        if final_files_pos:
-            final_context += f"\n[ARCHIVOS ADJUNTOS]\n{final_files_pos}"
 
-        return final_context
+{graph_header + final_graph_pos if final_graph_pos else ""}
+"""
+            if final_files_pos:
+                final_context += f"\n[ARCHIVOS ADJUNTOS]\n{final_files_pos}"
+
+            return final_context
+        finally:
+            self.max_tokens = original_max
 
     async def _get_rag_context(self, query: str, max_docs: int, use_poisoning_protection: bool) -> str:
         """
@@ -123,7 +212,7 @@ class ContextManager:
         """
         from core.vector_db import vector_db
         try:
-            results = vector_db.search_similar(query, limit=12)
+            results = await vector_db.search_similar(query, limit=12)
             
             # Step 1: Base Relevance Filter
             filtered = [r for r in results if r.get('distance', 1.0) < 0.7]
@@ -172,7 +261,7 @@ class ContextManager:
             logger.error(f"RAG retrieval error: {e}")
             return "[Error retrieving knowledge]"
 
-    async def _get_history_context(self, db_session, query: str, tokens_limit: int, mode: str) -> str:
+    async def _get_history_context(self, db_session, query: str, tokens_limit: int, mode: str, intent: str = "CONVERSATION") -> str:
         """
         Retrieves history and actively condenses it into permanent Memory if it grows too large.
         """
@@ -202,7 +291,15 @@ class ContextManager:
 
         parts = []
         current_tokens = 0
-        limit_msgs = 4 if mode == "DEEP_RESEARCH" else 10
+        
+        # v11.9.17: Restauración de continuidad (Fix Amnesia)
+        # 1 mensaje era demasiado poco; NOVA olvidaba lo que acababa de decir.
+        if mode == "DEEP_RESEARCH" or intent == "KNOWLEDGE":
+            # v12.1.5: Para KNOWLEDGE (resúmenes), limitamos agresivamente para evitar 
+            # que el modelo imite alucinaciones antiguas del historial.
+            limit_msgs = 2  
+        else:
+            limit_msgs = 10
         
         for msg in recent[:limit_msgs]:
             role = "RESUMEN" if msg.role == 'system_summary' else ("Usuario" if msg.role == 'user' else "NOVA")
@@ -224,7 +321,7 @@ class ContextManager:
         """
         Background task to condense a long chat sequence into a single memory block.
         """
-        from core.llm_client import llm_client
+        from core.llm_gateway import llm_gateway
         db = SessionLocal()
         try:
             # We want chronological order for the summary
@@ -239,7 +336,7 @@ CONVERSACIÓN:
             """
             # FIX #2: priority=1 (background), no priority=0 (chat). La condensación de
             # memoria no es una acción del usuario y no debe competir por chat_semaphore.
-            summary = await llm_client.chat([{"role": "user", "content": prompt}], temperature=0.3, priority=1)
+            summary = await llm_gateway.chat([{"role": "user", "content": prompt}], lane="batch", temperature=0.3, priority=1, ignore_overdrive=True)
             
             if summary and len(summary) > 20:
                 # Store persistent summary

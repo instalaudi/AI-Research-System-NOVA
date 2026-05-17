@@ -1,181 +1,309 @@
 import json
 import re
-import os
-import shutil
-import tempfile
-import unicodedata
+import asyncio
+import logging
 import datetime
-from typing import List, Optional, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from core.database import SessionLocal, ChatLog, UserMemory
-from core.task_queue import task_queue
-from core.llm_client import llm_client
-from core.prompts import MEMORY_EXTRACTION_PROMPT
-from core.context_manager import context_manager
-from core.text_utils import extract_keywords, escape_like
-from core.logging_config import get_logger, request_id_var
-from core.vector_db import vector_db
-import uuid
+import os
+from pathlib import Path
+from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
 
-logger = get_logger("services.memory")
+from core.lightrag_manager import lightrag_manager
+from core.llm_gateway import llm_gateway
+from core.config import LLM_FAST_MODEL
+from core.prompts import MEMORY_EXTRACTION_PROMPT
+
+# Configuración de Logs
+logger = logging.getLogger("nova.memory")
+
+# Rutas del Proyecto
+BASE_DIR = Path(__file__).resolve().parent.parent
+MEMORY_JSON_PATH = BASE_DIR / "data" / "long_term_memory.json"
 
 class MemoryService:
     def __init__(self):
-        pass
+        self._lock = Lock()
+        self.max_value_length = 500
+        self.memory_max_chars = 4000
+        self.base_dir = BASE_DIR
+        
+    # --- MÉTODOS DE MEMORIA JSON (BASADOS EN MARK-XXXIX) ---
+    
+    def _empty_memory(self) -> Dict[str, Any]:
+        return {
+            "identity":      {},
+            "preferences":   {},
+            "projects":      {},
+            "relationships": {},
+            "wishes":        {},
+            "notes":         {},
+        }
 
-    async def store_chat_message(self, role: str, content: str, user_id: int):
-        """
-        Stores a chat message in the persistent database and synchronization with Redis.
-        """
-        db = SessionLocal()
-        try:
-            new_log = ChatLog(role=role, content=content, user_id=user_id)
-            db.add(new_log)
-            db.commit()
-
-            # Redis Sync for recent chat history
+    def load_json_memory(self) -> Dict[str, Any]:
+        if not MEMORY_JSON_PATH.exists():
+            return self._empty_memory()
+        
+        with self._lock:
             try:
-                task_queue.redis.rpush("chat_history_recent", json.dumps({
-                    "role": role, 
-                    "content": content, 
-                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
-                    "request_id": request_id_var.get()
-                }))
-                task_queue.redis.ltrim("chat_history_recent", -50, -1)
-            except Exception as redis_e:
-                logger.warning(f"Failed to sync chat to Redis: {redis_e}")
+                data = json.loads(MEMORY_JSON_PATH.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    base = self._empty_memory()
+                    for key in base:
+                        if key not in data:
+                            data[key] = {}
+                    return data
+                return self._empty_memory()
+            except Exception as e:
+                logger.error(f"Error cargando memoria JSON: {e}")
+                return self._empty_memory()
 
-        except Exception as e:
-            logger.error(f"Error storing chat message: {e}", exc_info=True)
-        finally:
-            db.close()
-
-    def normalize_text(self, text: str) -> str:
-        """Removes accents, punctuation and converts to lowercase for robust matching."""
-        if not text: return ""
-        text = text.lower()
-        text = re.sub(r'[¿?¡!.,;:]', ' ', text)
-        return "".join(
-            c for c in unicodedata.normalize('NFD', text)
-            if unicodedata.category(c) != 'Mn'
-        ).strip()
-
-    def get_chat_history_context(self, db: Session, query_text: str, limit: int = 5) -> str:
-        """
-        Retrieves relevant message history using keyword matching.
-        """
-        query = self.normalize_text(query_text)
-        keywords = extract_keywords(query)
+    def save_json_memory(self, memory: Dict[str, Any]) -> None:
+        if not isinstance(memory, dict):
+            return
         
-        if not keywords:
-            recent = db.query(ChatLog).order_by(ChatLog.timestamp.desc()).limit(limit).all()
-            recent.reverse()
-        else:
-            filters = [ChatLog.content.ilike(f"%{escape_like(kw)}%", escape='\\') for kw in keywords]
-            matches = db.query(ChatLog).filter(or_(*filters)).order_by(ChatLog.timestamp.desc()).limit(limit).all()
-            matches.reverse()
-            recent = matches
-
-        if not recent:
-            return ""
-            
-        history_str = "HISTORIAL RELEVANTE DE CONVERSACIÓN (ÚLTIMOS 5):\n"
-        for msg in recent:
-            role_label = "Usuario" if msg.role == 'user' else "NOVA"
-            # Adjust truncation based on content type
-            limit_chars = 800 if any(tag in msg.content for tag in ["[VISTO POR NOVA", "[INVESTIGACIÓN DE NOVA"]) else 250
-            display_content = msg.content[:limit_chars] + "..." if len(msg.content) > limit_chars else msg.content
-            # FIXED: Removed brackets [] to avoid model mimicry
-            history_str += f"- {msg.timestamp.strftime('%H:%M')} {role_label}: {display_content}\n"
+        # Recorte de tamaño
+        memory = self._trim_to_limit(memory)
+        MEMORY_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
         
-        return history_str + "\n"
+        with self._lock:
+            try:
+                MEMORY_JSON_PATH.write_text(
+                    json.dumps(memory, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                logger.error(f"Error guardando memoria JSON: {e}")
 
-    async def extract_and_store_memory(self, user_query: str, user_id: int):
+    def _trim_to_limit(self, memory: Dict[str, Any]) -> Dict[str, Any]:
+        memory_str = json.dumps(memory, ensure_ascii=False)
+        if len(memory_str) <= self.memory_max_chars:
+            return memory
+        
+        entries = []
+        for cat, items in memory.items():
+            if not isinstance(items, dict): continue
+            for key, entry in items.items():
+                if isinstance(entry, dict) and "value" in entry:
+                    entries.append((cat, key, entry))
+        
+        entries.sort(key=lambda t: t[2].get("updated", "0000-00-00"))
+        
+        for cat, key, _ in entries:
+            if len(json.dumps(memory, ensure_ascii=False)) <= self.memory_max_chars:
+                break
+            del memory[cat][key]
+            logger.info(f"Memoria recortada: {cat}/{key}")
+        
+        return memory
+
+    def update_json_memory(self, memory_update: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(memory_update, dict) or not memory_update:
+            return self.load_json_memory()
+        
+        memory = self.load_json_memory()
+        changed = self._recursive_update(memory, memory_update)
+        if changed:
+            self.save_json_memory(memory)
+        return memory
+
+    def _recursive_update(self, target: Dict[str, Any], updates: Dict[str, Any]) -> bool:
+        changed = False
+        for key, value in updates.items():
+            if value is None: continue
+            if isinstance(value, str) and not value.strip(): continue
+                
+            if isinstance(value, dict) and "value" not in value:
+                if key not in target or not isinstance(target[key], dict):
+                    target[key] = {}
+                    changed = True
+                if self._recursive_update(target[key], value):
+                    changed = True
+            else:
+                raw_val = value["value"] if isinstance(value, dict) else value
+                new_val = str(raw_val)
+                if len(new_val) > self.max_value_length:
+                    new_val = new_val[:self.max_value_length].rstrip() + "..."
+                
+                entry = {"value": new_val, "updated": datetime.datetime.now().strftime("%Y-%m-%d")}
+                
+                existing = target.get(key, {})
+                if not isinstance(existing, dict) or existing.get("value") != new_val:
+                    target[key] = entry
+                    changed = True
+        return changed
+
+    def get_formatted_json_memory(self) -> str:
+        memory = self.load_json_memory()
+        if not any(memory.values()): return ""
+
+        lines = []
+        # Estructura simplificada para el prompt
+        sections = {
+            "identity": "## Perfil del Usuario",
+            "preferences": "## Preferencias y Gustos",
+            "projects": "## Proyectos Activos",
+            "relationships": "## Círculo Social",
+            "wishes": "## Planes y Deseos",
+            "notes": "## Otras Notas"
+        }
+        
+        for cat, title in sections.items():
+            items = memory.get(cat, {})
+            if items:
+                lines.append(f"\n{title}")
+                for key, entry in list(items.items())[:15]:
+                    val = entry.get("value") if isinstance(entry, dict) else entry
+                    if val:
+                        lines.append(f"- {key.replace('_', ' ').title()}: {val}")
+
+        if not lines: return ""
+        return "### MEMORIA A LARGO PLAZO\n" + "\n".join(lines) + "\n"
+
+    # --- MÉTODOS REQUERIDOS POR CHAT_SERVICE Y ROUTERS ---
+
+    async def build_rag_context(self, intent: str, query: str, files_context: str, db: Any) -> str:
         """
-        Background task to extract insights from user messages and store them in memory.
+        v13.8.0: Construye el contexto ultra-enriquecido combinando 
+        Memoria JSON, LightRAG y el nuevo Puente Graph-RAG SQL.
         """
-        prompt = MEMORY_EXTRACTION_PROMPT.format(user_query=user_query)
+        # 1. Obtener contexto del Grafo de Conocimiento Global (LightRAG)
+        rag_context = await lightrag_manager.query(query, mode="local")
+        
+        # 2. Obtener contexto del Puente Graph-RAG Local (SQL Structural Graph)
+        from core.knowledge_base import knowledge_base
+        sql_graph_results = await knowledge_base.search_enhanced(query, limit=3)
+        sql_context = ""
+        if sql_graph_results:
+            sql_context = "\n[CONOCIMIENTO ESTRUCTURAL RELACIONADO]:\n"
+            for res in sql_graph_results:
+                sql_context += f"- {res['title']}: {res['content'][:300]} (Fuente: {res['source']})\n"
+
+        # 3. Obtener Memoria JSON estructurada (Identidad/Preferencias)
+        json_memory = self.get_formatted_json_memory()
+        
+        # 4. Combinar todas las capas de realidad
+        full_context = f"{json_memory}\n{sql_context}\n\n### CONOCIMIENTO NARRATIVO (GRAFO)\n{rag_context}"
+        return full_context
+
+    async def ingest_document(self, file_stream, filename: str, user_id: int):
+        """Wrapper para el Librarian para ingesta de libros/documentos."""
+        from core.librarian import librarian
+        # Guardar temporalmente para que el Librarian lo procese
+        temp_path = self.base_dir / "data" / "uploads" / filename
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(temp_path, "wb") as f:
+            f.write(file_stream.read())
+        
         try:
-            messages = [{"role": "user", "content": prompt}]
-            insight = await llm_client.chat(messages, priority=1)
-            
-            if insight and insight.strip() and "NONE" not in insight.upper():
-                clean_insight = insight.strip()
-                if len(clean_insight) < 10:
-                    return
-
-                db = SessionLocal()
-                try:
-                    # v10.7.5: Semantic Deduplication via ChromaDB
-                    # Threshold: 0.15 (Cosine distance) -> Very similar
-                    similar = vector_db.search_similar_memory(clean_insight, user_id, limit=1)
-                    
-                    if similar and similar[0]["distance"] <= 0.15:
-                        logger.info(f"Semantic duplicate detected (dist: {similar[0]['distance']:.4f}). Skipping.")
-                        return
-
-                    # Create new memory record
-                    memory_token = str(uuid.uuid4())[:8]
-                    new_memory = UserMemory(insight=clean_insight, importance=1, user_id=user_id)
-                    db.add(new_memory)
-                    db.commit()
-                    db.refresh(new_memory)
-                    
-                    # Sync with VectorDB for future deduplication
-                    vector_db.index_memory(str(new_memory.id), clean_insight, user_id)
-                    
-                    logger.info(f"Insight stored for user {user_id}: '{clean_insight[:50]}'")
-                finally:
-                    db.close()
-        except Exception as e:
-            logger.error(f"Error extracting memory: {e}")
-
-    async def build_rag_context(self, intent: str, query: str, files_context: str, db: Session) -> str:
-        """
-        Builds the full RAG context using the context manager.
-        """
-        return await context_manager.build_context(intent, query, files_context, db)
-
-    async def ingest_document(self, file_content: Any, filename: str, user_id: int) -> bool:
-        """
-        Ingests a document through the Librarian.
-        """
-        ext = os.path.splitext(filename)[1].lower()
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                shutil.copyfileobj(file_content, tmp)
-                tmp_path = tmp.name
-            
-            from core.librarian import librarian
-            success = await librarian.ingest_book(tmp_path, filename, user_id=user_id)
-            return success
-        except Exception as e:
-            logger.error(f"Ingestion failed for {filename}: {e}")
-            return False
+            result = await librarian.ingest_book(str(temp_path), filename, user_id=user_id)
+            return result
         finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if temp_path.exists():
+                os.remove(temp_path)
 
-    def list_knowledge(self, db: Session, limit: int = 50, offset: int = 0) -> List[dict]:
-        """
-        Lists knowledge entries with pagination (v10.12.0). 
-        Default: 50 most recent items to avoid UI freezing.
-        """
+    def list_knowledge(self, db: Any, limit: int = 50, offset: int = 0):
+        """Lista entradas de la base de conocimiento (v10.12.0)."""
         from core.database import KnowledgeEntry
         entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.date.desc()).offset(offset).limit(limit).all()
         return [
             {
-                "id": e.id, 
-                "title": e.title, 
-                "category": e.category, 
-                "content": e.content, 
-                "confidence_score": e.confidence_score, 
-                "date": e.date.isoformat() if e.date else None, 
-                "url": e.url, 
-                "concepts": e.concepts
+                "id": e.id,
+                "title": e.title,
+                "category": e.category,
+                "date": e.date.isoformat(),
+                "score": e.score,
+                "concepts": e.concepts.split(",") if e.concepts else []
             } for e in entries
         ]
 
+    async def extract_and_store_memory(self, query: str, user_id: int) -> Optional[str]:
+        """Analiza la query para extraer hechos y guardarlos en JSON y Grafo."""
+        try:
+            # 1. Extracción vía LLM
+            prompt = MEMORY_EXTRACTION_PROMPT.format(user_query=query)
+            extracted = await llm_gateway.chat(
+                [
+                    {"role": "system", "content": "Extrae conocimiento relevante de la siguiente consulta. Responde solo con el hecho extraído de forma clara y directa, o 'NONE' si no hay información personal o útil."}, 
+                    {"role": "user", "content": prompt}
+                ], 
+                lane="batch", 
+                model=LLM_FAST_MODEL, 
+                priority=2
+            )
+            
+            extracted = extracted.strip()
+            if not extracted or extracted.upper() == "NONE":
+                return None
+            
+            # 2. Guardar en Grafo de Conocimiento (LightRAG)
+            await lightrag_manager.insert_text(f"Hecho sobre Juan Ramón: {extracted}")
+            
+            # 3. Guardar en Memoria JSON (Categorización simple)
+            # Intentamos adivinar la categoría por palabras clave
+            category = "notes"
+            lower_ext = extracted.lower()
+            if any(x in lower_ext for x in ["prefiero", "gusta", "amo", "odio", "favorito"]):
+                category = "preferences"
+            elif any(x in lower_ext for x in ["proyecto", "meta", "objetivo", "trabajando"]):
+                category = "projects"
+            elif any(x in lower_ext for x in ["llamo", "soy", "vivo", "trabajo de"]):
+                category = "identity"
+            
+            # Generar una clave corta basada en el contenido
+            key = re.sub(r'[^a-z0-9]', '_', extracted.lower()[:30]).strip('_')
+            self.update_json_memory({category: {key: extracted}})
+            
+            return f"He aprendido algo nuevo: {extracted}"
+        except Exception as e:
+            logger.error(f"Error en extract_and_store_memory: {e}")
+            return None
+
+    async def store_chat_message(self, role: str, content: str, user_id: int):
+        """Guarda un mensaje en el grafo para persistencia narrativa."""
+        try:
+            if not content or len(content.strip()) < 10:
+                return
+                
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            entry = f"[{timestamp}] {role.upper()}: {content}"
+            
+            # Solo guardamos mensajes significativos en el grafo para no ensuciarlo
+            # v12.1.0: Filtramos respuestas cortas o puramente sociales
+            if len(content) > 50:
+                await lightrag_manager.insert_text(entry)
+        except Exception as e:
+            logger.error(f"Error guardando mensaje en memoria: {e}")
+
+    async def store_visual_memory(self, analysis_dict: Dict[str, Any]):
+        """Convierte una observación visual en narrativa y la guarda en la Memoria a Largo Plazo."""
+        try:
+            timestamp = datetime.datetime.now().strftime("%A %d de %B de %Y, %I:%M %p")
+            
+            # Construir texto narrativo para LightRAG
+            narrative = f"[{timestamp}] OBSERVACIÓN VISUAL DE NOVA: "
+            narrative += f"El entorno se veía: {analysis_dict.get('descripcion_general', 'Normal')}. "
+            
+            if analysis_dict.get('juan_ramon_detectado'):
+                narrative += "Mi creador Juan Ramón estaba presente. "
+                ropa = analysis_dict.get('apariencia_juan_ramon')
+                if ropa: narrative += f"Él llevaba puesto: {ropa}. "
+                emocion = analysis_dict.get('estado_emocional_juan_ramon')
+                if emocion: narrative += f"Su estado emocional era: {emocion}. "
+            
+            extranos = analysis_dict.get('personas_desconocidas', 0)
+            if extranos > 0:
+                narrative += f"Había {extranos} persona(s) desconocida(s) en la habitación acompañándolo. "
+                
+            objetos = analysis_dict.get('objetos_comunes', [])
+            if objetos and isinstance(objetos, list):
+                narrative += f"Objetos visibles en la mesa/entorno: {', '.join(objetos)}. "
+                
+            # Guardar en LightRAG (el Long Term Memory Graph)
+            await lightrag_manager.insert_text(narrative)
+            logger.info(f"Memoria visual a largo plazo guardada: {narrative}")
+            
+        except Exception as e:
+            logger.error(f"Error guardando memoria visual: {e}")
+
+# Singleton para exportar
 memory_service = MemoryService()

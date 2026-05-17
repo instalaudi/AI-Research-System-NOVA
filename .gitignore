@@ -60,3 +60,28 @@ frontend/node_modules/
 knowledge_db.json
 tests/verify_*.py
 tests/check_*.py
+
+# Next.js Build Output & Cache
+frontend/.next/
+frontend/out/
+
+# Virtual Environments
+.venv/
+
+# Audio/Media files
+*.wav
+*.mp3
+
+# Credentials & Sensitive Files
+"api key Gemini y Groq.txt"
+*credentials*
+*key*.txt
+
+# System & Temp Files
+startup_error.txt
+artifacts/
+
+# ML/AI Models (ONNX, large binary models)
+backend/core/models/
+*.onnx
+*.bin

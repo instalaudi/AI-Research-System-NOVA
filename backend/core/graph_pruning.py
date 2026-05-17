@@ -159,7 +159,6 @@ async def merge_similar_nodes(limit: int = 100) -> Dict[str, Any]:
     db = SessionLocal()
     merged_count = 0
     try:
-        from core.llm_client import llm_client
         G = _build_networkx_graph(db)
         
         in_degrees = dict(G.in_degree())
@@ -172,18 +171,18 @@ async def merge_similar_nodes(limit: int = 100) -> Dict[str, Any]:
         leaf_nodes = leaf_nodes[:limit]
         
         for node_id in leaf_nodes:
-            # Conseguir el embedding de este nodo para buscar similares
-            emb = await llm_client.get_embedding(node_id)
-            if not emb: continue
-            
-            # Buscar en vector_db
-            matches = vector_db._search_direct(emb, top_k=3)
-            # Retorna diccionarios {"document": texto/titulo, "distance": float}
+            # v11.8.2: Búsqueda asíncrona usando la nueva arquitectura de VectorDB
+            try:
+                matches = await vector_db.search_similar(str(node_id), limit=3)
+            except Exception as e:
+                print(f"[GraphPruning] Error buscando similares para {node_id}: {e}")
+                continue
+                
             best_match = None
             best_sim = 0.0
             
             for m in matches:
-                doc_title = m.get("document", "")
+                doc_title = m.get("document", "") # document es el título en KnowledgeEntries
                 dist = m.get("distance", 1.0)
                 # Chroma usa cosine distance (1 - sim)
                 sim = 1.0 - dist

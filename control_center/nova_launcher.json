@@ -1,0 +1,31 @@
+{
+  "services": {
+    "warmup_delay": 30,
+    "num_ollama_engines": 3
+  },
+  "models": {
+    "LLM_FAST_MODEL": "qwen2.5:3b",
+    "LLM_MODEL_NAME": "qwen2.5:3b",
+    "LLM_CODER_MODEL": "qwen2.5-coder:7b",
+    "LLM_THINKER_MODEL": "qwen2.5:1.5b",
+    "DISTILL_MODEL_REASONING": "qwen2.5:1.5b",
+    "DISTILL_MODEL_GENERAL": "qwen2.5:1.5b",
+    "LLM_EMBED_MODEL": "all-MiniLM-L6-v2",
+    "OLLAMA_URL": "http://localhost:11434/api/chat"
+  },
+  "performance": {
+    "RATE_LIMIT_REQUESTS": "100",
+    "RATE_LIMIT_WINDOW": "60",
+    "CHAT_HISTORY_MAX_SIZE": "100",
+    "MAX_QUERY_LENGTH": "50000",
+    "COGNITIVE_MODE": "balanced"
+  },
+  "features": {
+    "DISTILLATION": "true",
+    "EVOLUTION": "true",
+    "PROACTIVE": "true",
+    "TELEGRAM_MODE": "polling",
+    "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+    "OLLAMA_NO_CLOUD": "1"
+  }
+}
