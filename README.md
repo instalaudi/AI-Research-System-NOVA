@@ -91,17 +91,17 @@ npm run dev
 
 ---
 
-## 🧪 Notas de Estabilización (Edición v9.0)
+## 🧪 Notas de Estabilización (Edición v13.9.0)
 
-Esta edición elimina por completo fugas históricas de sockets HTTP, caídas del Pool de sesiones transaccionales y colapsos sincrónicos originarios de la arquitectura anterior, rindiendo un uptime estable sin degradación del LLM Context. Se integró _Provenance Tracking_ que indexa internamente URLs verificables a nivel Base de Datos (Source Truth).
+Esta edición está diseñada para máxima estabilidad y rendimiento local en CPU. Se implementa concurrencia serializada estricta para evitar la saturación de núcleos durante inferencias Ollama concurrentes, optimización de base de datos SQLite en modo WAL de alta velocidad con RAG dinámico (LightRAG), blindaje de integridad de archivos críticos (IntegrityGuard) y exclusión segura de archivos pesados y credenciales en el control de versiones.
 
 ---
 
-### Novedades v11.1.2
+### Novedades v13.9.0
 
-- Snippet cache funcional con búsqueda y reutilización directa desde UI.
-- Historial semántico de código con endpoint `/api/history/search`.
-- Git history endpoint `/api/git/history` y diff endpoint `/api/git/diff/{commit_hash}`.
-- Drawer de diff con overlay clickeable y cierre por tecla Escape.
+- **Persistent Vision Eye:** Detección de movimiento y reconocimiento facial ligero (pHash + Hamming Distance) con OpenCV y notificaciones proactivas en Telegram.
+- **Motor de Voz Kokoro-82M:** Síntesis neural local ultra-rápida y natural en español optimizada para CPU.
+- **Google Workspace & OAuth2:** Integración segura con Gmail y Calendar para lectura y automatización de correo.
+- **Launcher Control Center:** Interfaz unificada de consola interactiva para el inicio, apagado y monitoreo de servicios del enjambre.
 
 _Desarrollado con ❤️ para la investigación predictiva escalable._
