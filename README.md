@@ -1,40 +1,41 @@
-# 🤖 Neural Autonomous Versatile Agent (NOVA) v12.0.0 "Agentic Skills & Persistence"
+# 🤖 Neural Autonomous Versatile Agent (NOVA) v13.9.0 "Sensory Awareness & Neural Voice"
 
 ## Identity: Principal Software Engineer & Autonomous Researcher
 
 ### Hardware Target: Local CPU/Ryzen Swarm Infrastructure (Turbo Optimized)
 
-Bienvenido a la versión **v12.0.0** de **NOVA**. Esta actualización mayor integra el motor de habilidades agenticas (**Agentic Skills Integration**). El sistema ahora incorpora **Chunking Semántico** de documentos, un **Sistema Autónomo de Lecciones Aprendidas** (Memoria Muscular para evitar repetir errores en builds) y **Protocolos Handoff** para asegurar cero pérdida de contexto entre el enjambre de agentes.
+Bienvenido a la versión **v13.9.0** de **NOVA**. Esta actualización mayor transforma a NOVA en un sistema con **Consciencia Sensorial y Voz Neuronal**, integrando visión en tiempo real, síntesis de audio neural local y automatización empresarial.
 
-![Dashboard Preview](https://imgshields.io/badge/Versi%C3%B3n-12.0.0-green?style=for-the-badge&logo=ai)
-![Stack](https://imgshields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama%20|%20ST-green?style=for-the-badge)
+![Dashboard Preview](https://imgshields.io/badge/Versi%C3%B3n-13.9.0-green?style=for-the-badge&logo=ai)
+![Stack](https://imgshields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama%20|%20Kokoro-green?style=for-the-badge)
 
 El sistema ha evolucionado de un chat tradicional a un **Cerebro Digital** con capas cognitivas:
 
+- **Persistent Vision Eye (Ojo Persistente)**: Daemon en segundo plano (`core/vision_monitor.py`) con detección facial de OpenCV, comparación por Distancia de Hamming (pHash) y alertas proactivas ante anomalías o cambios de presencia.
+- **Kokoro-82M Voice Synthesis**: Motor neural local de alta fidelidad que ofrece síntesis de voz en español fluida y de muy bajo consumo en CPU, con fallback automático.
+- **Google Workspace & OAuth2**: Integración segura de APIs de Google (Gmail, Calendar) para automatizar la gestión y filtrado de comunicaciones de manera autónoma.
 - **Cognitive Controller**: El motor lógico central que decide el modo de ejecución (SYSTEM, RESEARCH, KNOWLEDGE) de forma determinista, reduciendo la dependencia del LLM para el ruteo.
 - **Prompt Pipeline (Multifase)**: Fragmenta el razonamiento en etapas de **Interpretación**, **Planeación** y **Generación**, lo que garantiza respuestas estructuradas y precisas.
-- **Reflection Layer (Post-Verificación)**: Una capa de auto-auditoría que revisa la respuesta generada contra los hechos reales del sistema para detectar y corregir alucinaciones post-procesamiento.
-- **Tool-First Strategy**: El sistema siempre prioriza la recolección de evidencia (RAG, Grafos, Estado del Sistema) antes de iniciar cualquier proceso creativo.
+- **Reflection Layer**: Capa de auto-auditoría que revisa respuestas y código contra los hechos reales del sistema para corregir alucinaciones.
 
 ## 🌐 Memoria y Grafo de Conocimiento Dinámico
 
-- **Knowledge Graph**: Extracción automática de tripletas semánticas (Sujeto -> Relación -> Objeto) durante el aprendizaje para crear una red de conceptos interconectados.
+- **Knowledge Graph (LightRAG)**: Extracción de tripletas semánticas (Sujeto -> Relación -> Objeto) y memoria visual a largo plazo persistida en grafos de conocimiento.
 - **Memoria de 3 Capas**:
   - **Episódica**: Contexto conversacional reciente optimizado.
   - **Semántica**: RAG dinámico + Graph Enrichment.
   - **Operativa**: Conciencia total del propio estado (agentes, documentos, carga de sistema).
 
 ## 🛠️ Swarm de Agentes, Desarrollo y Sandbox
-
 - **Swarm Investigador**: Planner, Explorer, Analyzer, Critic y Librarian trabajando en paralelo con deduplicación vectorial.
 - **Swarm Desarrollador (Developer Loop)**: DeveloperAgent y AuditorAgent (QA) iteran sobre el código recién escrito hasta que compila perfecto.
-- **Gestor de Activos (v11.1.2)**: Pestañas de **Proyectos**, **Librería** (snippets), **Historial** (semántico) y **Git** (commits locales + diff).
+- **Gestor de Activos**: Pestañas de **Proyectos**, **Librería** (snippets), **Historial** (semántico) y **Git** (commits locales + diff).
 - **Versionado Git Automático**: Cada build exitoso guarda snapshot local y crea commit automático seguro por rutas explícitas.
 - **Auto-Reparación (Self-Healing)**: Motor de diagnóstico proactivo que detecta crashes, analiza tracebacks y aplica auto-parches de emergencia.
 - **Telegram Neural Link**: Integración total del bot conversacional móvil con el Cerebro Central, dotándolo de memoria a largo plazo (RAG), personalidad sólida e inmunidad horaria interactiva.
 - **NIAW (NOVA Immutable & Atomic Writes)**: Blindaje de datos contra cortes de energía. Sistema de escritura Write-Flush-Fsync-Replace que garantiza integridad atómica y backups automáticos (.bak).
 - **IntegrityGuard (Watchdog)**: Guardián de arranque que escanea archivos críticos, detecta bytes nulos/vacíos y restaura estados automáticamente notificando por voz (TTS).
-- **Monitor de Salud Total (v11.0)**: Panel de auditoría persistente y transaccional que centraliza fallos de infraestructura, errores de conectividad (Ollama) y corrupción de datos con alertas visuales dinámicas (pulsos Red/Amber) y auto-limpieza inteligente de registros operativos.
+- **Monitor de Salud Total**: Panel de auditoría persistente y transaccional que centraliza fallos de infraestructura, errores de conectividad (Ollama) y corrupción de datos con alertas visuales dinámicas (pulsos Red/Amber) y auto-limpieza inteligente de registros operativos.
 - **Evolución Real**: Capacidad nativa para integrar nuevas tecnologías y módulos en el núcleo sin intervención humana.
 - **Watchdog Protection**: Bucle de vigilancia de procesos que garantiza un uptime del 99.9% mediante reinicios autónomos tras actualizaciones de núcleo.
 - **Sandbox Seguro**: Ejecución aislada de Python y JS para verificar datos mediante computación real, integrada en el flujo cognitivo.
@@ -46,20 +47,20 @@ El sistema ha evolucionado de un chat tradicional a un **Cerebro Digital** con c
 
 ### Requisitos Previos
 
-- **Python 3.10+** (Recomendable entornos virtuales activos)
+- **Python 3.12+** (Recomendable entornos virtuales activos)
 - **Node.js 18+**
-- **Ollama** (Instalado y con los modelos `deepseek-r1:8b` y `llava-llama3` descargados)
+- **Ollama** (Instalado y con los modelos `qwen2.5:1.5b`, `qwen2.5-coder:3b` y `llava` descargados)
 
 ### Inicio Rápido (Windows)
 
-Simplemente ejecuta el script de consolidación:
+Simplemente ejecuta el script de inicio oficial de NOVA:
 
 ```powershell
-./start_ai_system.bat
+./start_NOVA.bat
 ```
 
-1. Configurará Bases de Datos (Evolucionado SQLite modo WAL + Chroma DB Local Storage).
-2. Conectará persistencias.
+1. Configurará Bases de Datos (Evolucionado SQLite modo WAL + Chroma DB Local Storage + LightRAG).
+2. Conectará persistencias y cargará el Ojo Persistente (si está activo en `.env`).
 3. Iniciará Microservicios asíncronos concurrentes.
 
 ---

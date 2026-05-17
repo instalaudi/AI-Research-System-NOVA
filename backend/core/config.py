@@ -11,8 +11,8 @@ from dotenv import load_dotenv  # type: ignore
 load_dotenv()
 
 # System Version
-VERSION = "13.8.0"
-SYSTEM_VERSION = VERSION  # v13.8.0: NOVA OVERDRIVE FINALIZED — Graph-RAG + Reflective Dev + Deep Swarm
+VERSION = "13.9.0"
+SYSTEM_VERSION = VERSION  # v13.9.0: AUTONOMOUS VISION & NEURAL VOICE — OpenCV + Kokoro-82M + Swarm Dev
 
 # ── Path Configuration (Absolute to Backend) ─────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
