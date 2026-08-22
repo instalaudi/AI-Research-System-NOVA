@@ -224,8 +224,9 @@ class LLMClient:
         """Lazy loading del modelo de embeddings local para ahorrar RAM si no se usa."""
         if not self._local_embed_model:
             try:
-                from sentence_transformers import SentenceTransformer
+                from sentence_transformers import SentenceTransformer  # type: ignore
                 # Force CPU to avoid conflict with Ollama/OOM
+
                 self._local_embed_model = SentenceTransformer(LLM_EMBED_MODEL, device="cpu")
                 print(f"[LLMClient] Modelo de embeddings local cargado: {LLM_EMBED_MODEL}")
             except Exception as e:
