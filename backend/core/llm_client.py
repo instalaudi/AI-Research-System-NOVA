@@ -316,18 +316,25 @@ class LLMClient:
                             clean_images = [img.split(",")[-1] if "," in img else img for img in images]
                             messages[-1]["images"] = clean_images
 
+                        payload_options = {
+                            "temperature": temperature if temperature is not None else (0.4 if priority == 0 else 0.1),
+                            "num_thread": OLLAMA_NUM_THREAD,
+                            "num_ctx": OLLAMA_NUM_CTX,
+                            "num_predict": 1024 if priority == 0 else OLLAMA_NUM_PREDICT,
+                        }
+                        if "moondream" in model_to_use.lower():
+                            payload_options["num_predict"] = 120
+                            payload_options["temperature"] = 0.1
+                            payload_options["repeat_penalty"] = 1.15
+
                         payload = {
                             "model": model_to_use,
                             "messages": messages,
                             "stream": False,
-                            "options": {
-                                "temperature": temperature if temperature is not None else (0.4 if priority == 0 else 0.1),
-                                "num_thread": OLLAMA_NUM_THREAD,
-                                "num_ctx": OLLAMA_NUM_CTX,
-                                "num_predict": 1024 if priority == 0 else OLLAMA_NUM_PREDICT,
-                            }
+                            "options": payload_options
                         }
                         if format == "json": payload["format"] = "json"
+
 
                     # ── EJECUCIÓN ──
                     try:
