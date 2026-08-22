@@ -393,11 +393,12 @@ def start_service(svc: str):
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=1,
+            bufsize=0,
             text=False,
             shell=shell,
             creationflags=creationflags,
         )
+
         state["proc"]   = proc
         state["pid"]    = proc.pid
         state["status"] = "starting"
@@ -753,7 +754,7 @@ if __name__ == "__main__":
     print(r"  | \| ||  _  || | | | /_\  ")
     print(r"  | .  || |_| || \_/ |/ _ \ ")
     print(r"  |_|\_||_____| \___//_/ \_\ ")
-    print(r"   Autonomous Research AI v11.9.18")
+    print(r"   Autonomous Research AI v14.0.0 Tier S")
     print(r"  ------------------------------------------")
     print(r"   Control Node: http://localhost:9999")
     print()
@@ -767,20 +768,26 @@ if __name__ == "__main__":
                 if not out:
                     print(f"[Launcher] Puerto {port} libre")
                     return
-                # Mata todos los PIDs que usan el puerto
+                # Mata todos los PIDs reales (distintos de 0) que usan el puerto
                 pids = set()
                 for line in out.strip().split('\n'):
                     parts = line.split()
                     if len(parts) >= 5:
-                        pids.add(parts[-1])
+                        p = parts[-1].strip()
+                        if p.isdigit() and int(p) > 0:
+                            pids.add(p)
+                if not pids:
+                    print(f"[Launcher] Puerto {port} disponible.")
+                    return
                 for pid in pids:
-                    print(f"[Launcher] Matando PID {pid} en puerto {port}")
+                    print(f"[Launcher] Liberando proceso PID {pid} en puerto {port}")
                     os.system(f'taskkill /PID {pid} /F >nul 2>&1')
-                time.sleep(2)
+                time.sleep(1.5)
             except Exception as e:
                 print(f"[Launcher] Error al limpiar puerto {port}: {e}")
                 time.sleep(1)
-        print(f"[Launcher] No se pudo liberar el puerto {port}")
+        print(f"[Launcher] Verificación de puerto {port} completada.")
+
 
     # Ensure port 9999 is free before binding (helps avoid EXIT code 15 on Windows)
     if os.name == "nt":
