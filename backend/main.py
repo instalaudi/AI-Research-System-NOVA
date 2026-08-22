@@ -37,9 +37,10 @@ try:
 except Exception:
     pass
 
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded  # type: ignore
+from slowapi.middleware import SlowAPIMiddleware  # type: ignore
 from typing import Any
+
 from contextlib import asynccontextmanager
 import whisper  # type: ignore
 from core.limiter import limiter
