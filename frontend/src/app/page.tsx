@@ -130,11 +130,12 @@ export default function Home() {
                 setMessages(JSON.parse(savedMessages));
             } catch (e) {
                 console.error("Failed to parse saved messages", e);
-                setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
+                setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v14.0.0 Tier S]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
             }
         } else {
-            setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
+            setMessages([{ role: "ai", text: "SISTEMA OPERATIVO NOVA [v14.0.0 Tier S]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }]);
         }
+
     }, []);
 
     // Auto-resize textarea
