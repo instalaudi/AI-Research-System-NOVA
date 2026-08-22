@@ -649,16 +649,37 @@ class ChatService:
         
         # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
         _LEARNING_SUMMARY_PATTERNS = [
-            r"qu[ée]\s+has\s+aprendido",
+            r"qu[ée]\s+.*(?:has|as|sabes|aprendiste|aprendido|nuevo|conocimiento)",
             r"resume\s+lo\s+(que|aprendido|acumulado)",
-            r"cu[ée]ntame\s+(que|lo que)\s+has\s+aprendido",
+            r"cu[ée]ntame\s+(que|lo que)\s+(?:has|as)\s+aprendido",
             r"qu[ée]\s+conocimiento\s+tienes",
+            r"aprendido\s+hoy",
+            r"qu[eé]\s+nuevas?\s+cosas",
+            r"que\s+hay\s+de\s+nuevo"
         ]
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
         if is_learning_summary:
             # Para resumen de aprendizaje, usar prompt completo para garantizar coherencia
             system_id = NOVA_IDENTITY_PROMPT
+            try:
+                recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
+                if recent_entries:
+                    topics_list = "\n".join([f"- **{e.topic}** (Confianza: {int((e.confidence_score or 0.8)*100)}%): {e.summary[:200]}..." for e in recent_entries])
+                    knowledge_context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO POR TI (NOVA):\n{topics_list}\n(Explica a Juan Ramón estos temas que tú como NOVA has aprendido e investigado recientemente)."
+            except Exception:
+                pass
+
+        # Re-construir user_prompt con el knowledge_context enriquecido
+        prompt_tpl = VISION_ANALYSIS_PROMPT_BODY if images else RAG_STREAM_PROMPT_BODY
+        user_prompt = prompt_tpl.format(
+            query=query, 
+            context=knowledge_context, 
+            files_context=files_context,
+            image_count=len(images or []) if images else 0,
+            current_time=current_time
+        )
+
         
         # En el carril rápido, enviamos la query cruda sin el template largo de RAG
         # para ahorrar otros ~200 tokens de prefill.
