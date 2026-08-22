@@ -75,9 +75,11 @@ class LLMRouter:
                 kwargs["model"] = LLM_VISION_MODEL
 
         try:
-            print(f"[Router] Routing request for '{agent_name}' to engine: {client.name} (Port: {client.base_url}, Model: {kwargs.get('model', client.default_model)})")
+            target_model = kwargs.get("model") or getattr(client, "default_model", getattr(client, "model", "default"))
+            print(f"[Router] Routing request for '{agent_name}' to engine: {client.name} (Port: {client.base_url}, Model: {target_model})")
             return await client.chat(messages, **kwargs)
         finally:
+
             if is_high_prio:
                 async with self._lock:
                     self._active_high_priority = max(0, self._active_high_priority - 1)

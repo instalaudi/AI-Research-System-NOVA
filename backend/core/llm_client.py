@@ -161,11 +161,13 @@ class PrioritySemaphore:
 class LLMClient:
     def __init__(self, model: str = DEFAULT_MODEL, base_url: Optional[str] = None, name: str = "Standard"):
         self.model = model
+        self.default_model = model
         self.base_url = base_url or OLLAMA_URL
         self.name = name
         self.fast_model = LLM_FAST_MODEL
         self.coder_model = LLM_CODER_MODEL
         self.circuit_breaker = CircuitBreaker()
+
         self._client: Optional[httpx.AsyncClient] = None
         
         # v11.5: Unificación de Semáforos para evitar Gridlock en CPU
