@@ -1,1 +1,113 @@
-# ÍNDICE DE DOCUMENTACIÓN - v11.1.1\n\n## 📚 Documentos Disponibles\n\nEsta es una guía rápida para encontrar la documentación correcta según tu necesidad.\n\n---\n\n## 🚀 Para Usuarios Nuevos\n\n1. **STARTUP_GUIDE.md** ← COMIENZA AQUÍ\n   - Cómo iniciar el sistema\n   - Nuevas características v11.1.1 (Project Manager)\n   - Solución de problemas comunes\n\n2. **QUICK_START.md**\n   - Configuración rápida de modelos\n   - Primeros pasos con NOVA\n   - Cómo usar Project Manager\n\n3. **README.md**\n   - Visión general del sistema\n   - Características principales\n   - Requisitos previos\n\n---\n\n## 👨‍💻 Para Desarrolladores\n\n1. **PROJECT_MANAGER_DOCUMENTATION.md** ← DOCUMENTACIÓN TÉCNICA\n   - Arquitectura del Project Manager\n   - Endpoints del API\n   - Flujo de datos\n   - Testing y troubleshooting\n   - Roadmap futuro\n\n2. **CHANGELOG_v11.1.1_DETAILED.md**\n   - Cambios específicos de v11.1.1\n   - Estadísticas de implementación\n   - Validación completada\n   - Mejoras futuras\n\n3. **CHANGELOG.md**\n   - Historial de versiones\n   - Cambios por versión\n   - Notas de estabilidad\n\n4. **FIXES_APPLIED.md**\n   - Bugs arreglados\n   - Soluciones implementadas\n   - Historial de fixes\n\n---\n\n## 📊 Estructura de Cambios v11.1.1\n\n```\nNUEVOS ARCHIVOS:\n├── frontend/src/components/ProjectManager.tsx\n└── PROJECT_MANAGER_DOCUMENTATION.md\n└── CHANGELOG_v11.1.1_DETAILED.md\n\nARCHIVOS MODIFICADOS:\n├── frontend/src/app/page.tsx (+ cambio automático de tab)\n├── backend/routers/chat.py (+ endpoint /projects/list)\n├── backend/services/chat_service.py (+ mensaje trigger)\n├── README.md (actualizado a v11.1.1)\n├── QUICK_START.md (nuevas instrucciones)\n├── STARTUP_GUIDE.md (sección Project Manager)\n├── CHANGELOG.md (+ entrada v11.1.1)\n└── FIXES_APPLIED.md (+ fix UX)\n```\n\n---\n\n## 🎯 Navegación por Tema\n\n### Instalación y Setup\n- STARTUP_GUIDE.md → Opción 1/2 para iniciar\n- QUICK_START.md → Configuración de variables de entorno\n- README.md → Requisitos previos\n\n### Uso de Project Manager\n- STARTUP_GUIDE.md → Sección \"Usando la Nueva Funcionalidad\"\n- QUICK_START.md → Sección 3 \"Crear un Proyecto\"\n- PROJECT_MANAGER_DOCUMENTATION.md → Overview y API Reference\n\n### Arquitectura Técnica\n- PROJECT_MANAGER_DOCUMENTATION.md → Architecture section\n- CHANGELOG_v11.1.1_DETAILED.md → Flujo End-to-End\n- README.md → Descripción de componentes\n\n### Troubleshooting\n- STARTUP_GUIDE.md → Sección \"Si aún tienes error...\"\n- PROJECT_MANAGER_DOCUMENTATION.md → Troubleshooting section\n- FIXES_APPLIED.md → Historial de problemas resueltos\n\n### Historial de Cambios\n- CHANGELOG.md → Cambios por versión\n- FIXES_APPLIED.md → Bugs y fixes\n- CHANGELOG_v11.1.1_DETAILED.md → Detalles específicos de v11.1.1\n\n---\n\n## 🔍 Búsqueda Rápida\n\n**¿Cómo creo un proyecto?**\n→ QUICK_START.md (Sección 3: \"Crear un Proyecto\")\n\n**¿Cómo funciona el cambio automático de tab?**\n→ PROJECT_MANAGER_DOCUMENTATION.md (Sección \"Lógica de Cambio Automático\")\n\n**¿Cuál es la URL del endpoint de proyectos?**\n→ PROJECT_MANAGER_DOCUMENTATION.md (API Reference)\n\n**¿Qué archivo contiene el componente ProjectManager?**\n→ frontend/src/components/ProjectManager.tsx\n\n**¿Por qué no funciona el Project Manager?**\n→ PROJECT_MANAGER_DOCUMENTATION.md (Troubleshooting)\n\n**¿Qué cambios se hicieron en v11.1.1?**\n→ CHANGELOG_v11.1.1_DETAILED.md\n\n**¿Cómo inicio el sistema nuevo?**\n→ STARTUP_GUIDE.md (Opción 1 o 2)\n\n---\n\n## 📈 Estadísticas de Documentación\n\n| Documento | Tamaño | Fecha | Estado |\n|-----------|--------|-------|--------|\n| PROJECT_MANAGER_DOCUMENTATION.md | ~30 KB | 2026-04-13 | ✅ Completo |\n| CHANGELOG_v11.1.1_DETAILED.md | ~25 KB | 2026-04-13 | ✅ Completo |\n| CHANGELOG.md | Actualizado | 2026-04-13 | ✅ Actualizado |\n| FIXES_APPLIED.md | Actualizado | 2026-04-13 | ✅ Actualizado |\n| README.md | Actualizado | 2026-04-13 | ✅ Actualizado |\n| QUICK_START.md | Actualizado | 2026-04-13 | ✅ Actualizado |\n| STARTUP_GUIDE.md | Actualizado | 2026-04-13 | ✅ Actualizado |\n| ÍNDICE_DOCUMENTACIÓN.md | Este archivo | 2026-04-13 | ✅ Nuevo |\n\n---\n\n## 🎓 Curva de Aprendizaje\n\n### Nivel 1: Usuario Final\n1. Lee STARTUP_GUIDE.md\n2. Ejecuta `start_ai_system.bat`\n3. Usa Project Manager desde la UI\n\n### Nivel 2: Usuario Avanzado\n1. Lee QUICK_START.md\n2. Entiende el flow de creación de proyectos\n3. Personaliza parámetros del backend\n\n### Nivel 3: Desarrollador\n1. Estudia PROJECT_MANAGER_DOCUMENTATION.md\n2. Revisa CHANGELOG_v11.1.1_DETAILED.md\n3. Modifica código fuente para extensiones\n\n### Nivel 4: Arquitecto\n1. Analiza toda la documentación\n2. Revisa código fuente de todos los componentes\n3. Diseña mejoras para futuras versiones\n\n---\n\n## 🔗 Enlaces Relacionados\n\n**Dentro del Proyecto:**\n- Código Frontend: `frontend/src/components/ProjectManager.tsx`\n- Backend Endpoints: `backend/routers/chat.py` (línea 197)\n- Lógica de Stream: `frontend/src/app/page.tsx` (líneas 400-415)\n- Mensaje Trigger: `backend/services/chat_service.py` (línea ~213)\n\n**Directorios**:\n- Proyectos guardados: `data/projects/`\n- Frontend source: `frontend/src/`\n- Backend source: `backend/`\n\n---\n\n## ✨ Notas de Impacto\n\n✅ **Mejoras de UX**:\n- Cambio automático de tab sin intervención\n- Listado centralizado de proyectos\n- Metadatos automáticos (tamaño, fecha)\n\n✅ **Mejoras de Seguridad**:\n- Autenticación en endpoint /projects/list\n- Filtrado automático por user_id\n\n✅ **Mejoras de Documentación**:\n- Documentación técnica completa\n- Guías paso a paso\n- Troubleshooting detallado\n\n---\n\n## 🎯 Próximos Pasos\n\n1. **Leer**: Selecciona el documento apropiado para tu rol\n2. **Entender**: Revisa la Sección relevante\n3. **Implementar**: Sigue los pasos indicados\n4. **Validar**: Prueba la funcionalidad\n5. **Reportar**: Si hay problemas, consulta Troubleshooting\n\n---\n\n## 📞 Support\n\n**Para problemas técnicos:**\n1. Consulta el documento relevante\n2. Revisa la sección Troubleshooting\n3. Verifica los logs del backend\n\n**Para mejoras futuras:**\n- Consulta CHANGELOG_v11.1.1_DETAILED.md → Sección \"Roadmap\"\n- PROJECT_MANAGER_DOCUMENTATION.md → Sección \"Mejoras Futuras\"\n\n---\n\n**Última actualización**: 13 de Abril de 2026\n**Versión**: 11.1.1\n**Estado**: ✅ COMPLETO Y DOCUMENTADO
+# ÍNDICE DE DOCUMENTACIÓN - v14.0.0 (Tier S Architecture)
+
+## 📚 Documentos Disponibles
+
+
+Esta es una guía rápida para encontrar la documentación correcta según tu necesidad.
+
+---
+
+## 🚀 Para Usuarios Nuevos
+
+1. **STARTUP_GUIDE.md**
+   - Cómo iniciar el sistema
+   - Solución de problemas comunes
+
+2. **QUICK_START.md**
+   - Configuración rápida de modelos y RAG
+   - Primeros pasos con NOVA
+
+3. **README.md**
+   - Visión general del sistema (Sensory Awareness & Neural Voice)
+   - Características principales (Kokoro, OpenCV)
+   - Requisitos previos
+
+---
+
+## 👨‍💻 Para Desarrolladores
+
+1. **AUDIT_EXECUTIVE_SUMMARY_v13.9.0.md** ← REPORTE DE AUDITORÍA
+   - Hallazgos críticos bloqueantes (Race conditions, CORS, etc.)
+   - Plan de remediación
+
+2. **PATCHES_APPLIED_v13.9.1.md**
+   - Registro de parches de estabilidad aplicados
+   - Estado de migración de variables globales a BD ACID
+
+3. **HOTFIXES_v13.9.1_FINAL.md**
+   - Soluciones críticas al arranque del Launcher (`launcher_server.py`)
+   - Seguridad y Control de Puertos
+
+4. **CHANGELOG.md**
+   - Historial de versiones pasadas (hasta v12.0.0)
+   - Notas de estabilidad
+
+---
+
+## 📊 Estructura de Cambios y Estabilidad v13.9.1
+
+```
+NUEVOS ARCHIVOS / MODIFICADOS:
+├── backend/main.py (+ seguridad CORS, carga paralela Whisper)
+├── backend/core/database.py (+ tabla ApprovalRequest)
+├── backend/services/chat_service.py (+ persistencia ACID de tools pendientes)
+├── control_center/launcher_server.py (+ auth obligatorio de API Key)
+├── README.md (actualizado a v13.9.1)
+├── PATCHES_APPLIED_v13.9.1.md (+ registro de fixes)
+└── AUDIT_EXECUTIVE_SUMMARY_v13.9.0.md
+```
+
+---
+
+## 🎯 Navegación por Tema
+
+### Seguridad y Auditoría
+- AUDIT_EXECUTIVE_SUMMARY_v13.9.0.md → Resumen de vulnerabilidades detectadas
+- PATCHES_APPLIED_v13.9.1.md → Parches que corrigen fallos de concurrencia y seguridad
+- HOTFIXES_v13.9.1_FINAL.md → Parches críticos del Control Center
+
+### Instalación y Setup
+- STARTUP_GUIDE.md → Opciones para iniciar
+- README.md → Requisitos previos
+
+### Uso Avanzado
+- PROJECT_MANAGER_DOCUMENTATION.md → Gestión de repositorios autónoma
+
+---
+
+## 🔍 Búsqueda Rápida
+
+**¿Cuáles fueron los problemas críticos en v13.9.0?**
+→ AUDIT_EXECUTIVE_SUMMARY_v13.9.0.md (Sección Hallazgos Críticos)
+
+**¿Cómo se arregló el race condition de pending_tools?**
+→ PATCHES_APPLIED_v13.9.1.md y código en `backend/services/chat_service.py`
+
+**¿Qué pasa si falla el arranque del Control Center?**
+→ HOTFIXES_v13.9.1_FINAL.md
+
+---
+
+## 📈 Estadísticas de Documentación
+
+| Documento | Estado |
+|-----------|--------|
+| AUDIT_EXECUTIVE_SUMMARY_v13.9.0.md | ✅ Completo |
+| PATCHES_APPLIED_v13.9.1.md | ✅ Completo |
+| HOTFIXES_v13.9.1_FINAL.md | ✅ Completo |
+| README.md | ✅ Actualizado a v13.9.1 |
+| ÍNDICE_DOCUMENTACIÓN.md | Este archivo |
+
+---
+
+## 📞 Support
+
+**Para problemas técnicos:**
+1. Revisa los logs del Launcher y Backend
+2. Consulta la sección de Hotfixes (`HOTFIXES_v13.9.1_FINAL.md`) si es un problema de arranque.
+
+---
+
+**Última actualización**: Junio de 2026
+**Versión**: 13.9.1
+**Estado**: ✅ COMPLETO Y DOCUMENTADO

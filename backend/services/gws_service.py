@@ -19,19 +19,21 @@ class GwsService:
                 # Nota: algunos comandos helper '+' ya devuelven formato legible o JSON
                 pass
 
-            process = await asyncio.create_subprocess_exec(
-                *full_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            result = await asyncio.to_thread(
+                subprocess.run,
+                full_cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
             )
-            stdout, stderr = await process.communicate()
             
-            if process.returncode != 0:
-                error_msg = stderr.decode().strip()
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
                 logger.error(f"Error ejecutando gws: {error_msg}")
                 return {"success": False, "error": error_msg}
 
-            output = stdout.decode().strip()
+            output = result.stdout.strip()
             try:
                 # Intentar parsear como JSON si parece JSON
                 if output.startswith("{") or output.startswith("["):

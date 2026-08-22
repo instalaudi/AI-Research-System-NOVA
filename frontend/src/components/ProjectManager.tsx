@@ -318,19 +318,32 @@ export default function ProjectManager() {
         return getBaseUrl().replace("/api", "");
     };
 
-    const handleDownload = (downloadUrl: string, filename: string) => {
-        // Construir URL absoluta hacia el backend FastAPI (puerto 8000)
-        // downloadUrl es relativa (/api/chat/download/...) y debe apuntar al backend, no a Next.js
-        const absoluteUrl = downloadUrl.startsWith('http')
-            ? downloadUrl
-            : `${getBackendUrl()}${downloadUrl}`;
-        const link = document.createElement('a');
-        link.href = absoluteUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const handleDownload = async (downloadUrl: string, filename: string) => {
+        try {
+            // Normalizar el endpoint para apiFetch (eliminar /api inicial si ya viene en download_url)
+            const endpoint = downloadUrl.startsWith('/api') 
+                ? downloadUrl.replace('/api', '') 
+                : downloadUrl;
+            
+            const response = await apiFetch(endpoint);
+            if (!response.ok) {
+                throw new Error(`Error al descargar el archivo (HTTP ${response.status})`);
+            }
+            const blob = await response.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+            console.error("Download failed:", err);
+            alert("No se pudo descargar el proyecto. Verifica tu sesión.");
+        }
     };
+
 
     if (loadingProjects) {
         return (

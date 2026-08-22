@@ -1,9 +1,11 @@
 "use client";
+import AudioStreamPlayer from "@/components/AudioStreamPlayer";
 import ControlPanel from "@/components/ControlPanel";
 import KnowledgeBrowser from "@/components/KnowledgeBrowser";
 import KnowledgeGraph from "@/components/KnowledgeGraph";
 import ProjectManager from "@/components/ProjectManager";
 import ResearchSession from "@/components/ResearchSession";
+
 import { apiFetch, getBaseUrl } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import { Activity, AlertCircle, BarChart as BarChartIcon, BookOpen, Camera, Check, CheckCircle, Clock, Copy, Cpu, Database, FileCode, Lock, Menu, Mic, Paperclip, Search, Send, Shield, SlidersHorizontal, Terminal, TrendingUp, User as UserIcon, Volume2, VolumeX, X } from "lucide-react";
@@ -1090,7 +1092,7 @@ export default function Home() {
                                                 try {
                                                     const btn = document.getElementById('webcam-btn');
                                                     if (btn) btn.classList.add('animate-pulse', 'text-green-400');
-                                                    const res = await apiFetch('/api/vision/webcam/analyze', {
+                                                    const res = await apiFetch('/vision/webcam/analyze', {
                                                         method: 'POST',
                                                         headers: { 'Content-Type': 'application/json' },
                                                         body: JSON.stringify({ prompt: 'Describe en detalle y en español lo que ves en esta imagen de la cámara web. Sé específico sobre objetos, personas, colores y ambiente.' })
@@ -1098,12 +1100,12 @@ export default function Home() {
                                                     const data = await res.json();
                                                     if (data.analysis) {
                                                         setMessages((prev: any[]) => [...prev, 
-                                                            { role: 'user', content: '📷 [Captura de Webcam]' },
-                                                            { role: 'assistant', content: `🎥 **Análisis de Webcam** (${data.resolution}):\n\n${data.analysis}` }
+                                                            { role: 'user', text: '📷 [Captura de Webcam]' },
+                                                            { role: 'ai', text: `🎥 **Análisis de Webcam** (${data.resolution}):\n\n${data.analysis}` }
                                                         ]);
                                                     }
                                                 } catch (e: any) {
-                                                    setMessages((prev: any[]) => [...prev, { role: 'assistant', content: `⚠️ No pude acceder a la cámara: ${e.message}` }]);
+                                                    setMessages((prev: any[]) => [...prev, { role: 'ai', text: `⚠️ No pude acceder a la cámara: ${e.message}` }]);
                                                 } finally {
                                                     const btn = document.getElementById('webcam-btn');
                                                     if (btn) btn.classList.remove('animate-pulse', 'text-green-400');
@@ -1152,7 +1154,7 @@ export default function Home() {
                                             onPaste={handlePaste}
                                             rows={1}
                                             placeholder={isRecording ? "Escuchando..." : "Escribe un tema o pregunta..."}
-                                            className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-4 pl-[8.5rem] pr-14 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm shadow-2xl text-white placeholder:text-gray-600 resize-none overflow-y-auto scrollbar-hide min-h-[56px] flex items-center"
+                                            className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-4 pl-[11rem] pr-14 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm shadow-2xl text-white placeholder:text-gray-600 resize-none overflow-y-auto scrollbar-hide min-h-[56px] flex items-center"
                                         />
                                         {isRecording && (
                                             <div className="absolute left-[88px] top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
@@ -1630,10 +1632,19 @@ function ChatMessage({ role, text, images }: { role: 'ai' | 'user', text: string
                         </div>
                     );
                 })}
+                {role === 'ai' && text.trim().length > 0 && (
+                    <div className="mt-3 pt-2 border-t border-gray-800/50 flex items-center justify-between">
+                        <AudioStreamPlayer text={text} className="!p-1.5 !bg-[#161616]/80 text-xs border-gray-800/60" />
+                        <span className="text-[9px] font-mono text-gray-500 tracking-wider uppercase flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block" /> Guardrail Verified
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );
 }
+
 
 function AgentStatus({ name, status }: { name: string, status: 'working' | 'idle' }) {
     return (

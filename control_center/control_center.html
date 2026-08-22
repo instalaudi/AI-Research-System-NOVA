@@ -827,8 +827,24 @@ body::before {
               <input class="cfg-input" id="cfg-LLM_EMBED_MODEL" placeholder="all-MiniLM-L6-v2">
             </div>
             <div class="cfg-row">
-              <span class="cfg-label">OLLAMA_URL</span>
-              <input class="cfg-input" id="cfg-OLLAMA_URL" placeholder="http://localhost:11434/api/chat">
+              <span class="cfg-label">OLLAMA_URL <small>(Motor 1 · Chat)</small></span>
+              <input class="cfg-input" id="cfg-OLLAMA_URL" placeholder="http://localhost:11438/api/chat">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_DEV_URL <small>(Motor 2 · Código)</small></span>
+              <input class="cfg-input" id="cfg-LLM_DEV_URL" placeholder="http://localhost:11439/api/chat">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_AUDIT_URL <small>(Motor 3 · Auditoría/Visión)</small></span>
+              <input class="cfg-input" id="cfg-LLM_AUDIT_URL" placeholder="http://localhost:11440/api/chat">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_AUDIT_MODEL</span>
+              <input class="cfg-input" id="cfg-LLM_AUDIT_MODEL" placeholder="phi3:mini">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-label">LLM_VISION_MODEL</span>
+              <input class="cfg-input" id="cfg-LLM_VISION_MODEL" placeholder="llava-llama3">
             </div>
           </div>
         </div>
@@ -842,9 +858,9 @@ body::before {
             <div class="cfg-row">
               <span class="cfg-label">Número de motores Ollama</span>
               <select class="cfg-select" id="cfg-num_ollama_engines" title="Número de motores Ollama para ejecución paralela">
-                <option value="1">1 motor (puerto 11434)</option>
-                <option value="2">2 motores (+11435)</option>
-                <option value="3" selected>3 motores (+11436)</option>
+                <option value="1">1 motor (puerto 11438)</option>
+                <option value="2">2 motores (+11439)</option>
+                <option value="3" selected>3 motores (+11440)</option>
               </select>
             </div>
             <div class="cfg-row">
@@ -1294,7 +1310,8 @@ async function saveSection(section, btn) {
 
   if (section === 'models') {
     payload.models = {};
-    ['LLM_FAST_MODEL','LLM_MODEL_NAME','LLM_CODER_MODEL','LLM_EMBED_MODEL','OLLAMA_URL'].forEach(k => {
+    ['LLM_FAST_MODEL','LLM_MODEL_NAME','LLM_CODER_MODEL','LLM_EMBED_MODEL',
+     'OLLAMA_URL','LLM_DEV_URL','LLM_AUDIT_URL','LLM_AUDIT_MODEL','LLM_VISION_MODEL'].forEach(k => {
       const el = document.getElementById(`cfg-${k}`);
       if (el) payload.models[k] = el.value;
     });
@@ -1360,7 +1377,7 @@ async function refreshOllamaModels(silent = false) {
     cachedModels = data.models || [];
     if (!silent) toast(`${cachedModels.length} modelos cargados. Haz clic en 📋 para verlos.`, 'ok');
   } catch(e) {
-    if (!silent) toast('Ollama no responde en puerto 11434', 'err');
+    if (!silent) toast('Ollama no responde (revisa OLLAMA_URL y que el servicio esté activo)', 'err');
   }
 }
 
@@ -1412,7 +1429,7 @@ function togglePicker(inputId) {
 document.addEventListener('DOMContentLoaded', () => {
   // Render empty cards
   ['backend','frontend','ollama_1','ollama_2','ollama_3'].forEach(id => {
-    renderCard(id, {status:'stopped', port: {backend:8000,frontend:3000,ollama_1:11434,ollama_2:11435,ollama_3:11436}[id], pid:null});
+    renderCard(id, {status:'stopped', port: {backend:8000,frontend:3000,ollama_1:11438,ollama_2:11439,ollama_3:11440}[id], pid:null});
   });
 
   // Warmup range sync

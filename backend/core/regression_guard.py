@@ -310,7 +310,7 @@ class RegressionGuard:
         """Verifica que Ollama esté corriendo y accesible."""
         try:
             import httpx
-            ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
+            ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11438/api/chat")
             base = ollama_url.rsplit("/api/", 1)[0] if "/api/" in ollama_url else ollama_url
 
             async with httpx.AsyncClient(timeout=5.0) as client:

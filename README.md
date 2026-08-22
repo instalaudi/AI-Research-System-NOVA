@@ -1,22 +1,28 @@
-# 🤖 Neural Autonomous Versatile Agent (NOVA) v13.9.0 "Sensory Awareness & Neural Voice"
+# 🤖 Neural Autonomous Versatile Agent (NOVA) v14.0.0 "Tier S Autonomous Intelligence & Real-Time Full-Duplex"
 
 ## Identity: Principal Software Engineer & Autonomous Researcher
 
 ### Hardware Target: Local CPU/Ryzen Swarm Infrastructure (Turbo Optimized)
 
-Bienvenido a la versión **v13.9.0** de **NOVA**. Esta actualización mayor transforma a NOVA en un sistema con **Consciencia Sensorial y Voz Neuronal**, integrando visión en tiempo real, síntesis de audio neural local y automatización empresarial.
+Bienvenido a la versión **v14.0.0** de **NOVA**. Esta actualización mayor consolida una arquitectura de grado industrial **Tier S** que integra búsqueda híbrida (BM25 + ChromaDB RRF), memoria jerárquica episódica, ciclo TDD con Sandbox AST de auto-reparación, audio streaming ultra-rápido (<300ms) con soporte de Barge-in, ingestión web con sanitización de HTML y soporte nativo para el protocolo MCP con guardrails anti-alucinación.
 
-![Dashboard Preview](https://imgshields.io/badge/Versi%C3%B3n-13.9.0-green?style=for-the-badge&logo=ai)
-![Stack](https://imgshields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama%20|%20Kokoro-green?style=for-the-badge)
+![Dashboard Preview](https://img.shields.io/badge/Versi%C3%B3n-14.0.0_Tier_S-blue?style=for-the-badge&logo=ai)
+![Tests](https://img.shields.io/badge/Tests-31%2F31_Passed_(100%25)-brightgreen?style=for-the-badge)
+![Stack](https://img.shields.io/badge/Stack-Next.js%20|%20FastAPI%20|%20Ollama%20|%20Kokoro%20|%20MCP-purple?style=for-the-badge)
 
-El sistema ha evolucionado de un chat tradicional a un **Cerebro Digital** con capas cognitivas:
+El sistema ha evolucionado a un **Cerebro Digital Autónomo** con capacidades avanzadas:
 
-- **Persistent Vision Eye (Ojo Persistente)**: Daemon en segundo plano (`core/vision_monitor.py`) con detección facial de OpenCV, comparación por Distancia de Hamming (pHash) y alertas proactivas ante anomalías o cambios de presencia.
-- **Kokoro-82M Voice Synthesis**: Motor neural local de alta fidelidad que ofrece síntesis de voz en español fluida y de muy bajo consumo en CPU, con fallback automático.
-- **Google Workspace & OAuth2**: Integración segura de APIs de Google (Gmail, Calendar) para automatizar la gestión y filtrado de comunicaciones de manera autónoma.
-- **Cognitive Controller**: El motor lógico central que decide el modo de ejecución (SYSTEM, RESEARCH, KNOWLEDGE) de forma determinista, reduciendo la dependencia del LLM para el ruteo.
-- **Prompt Pipeline (Multifase)**: Fragmenta el razonamiento en etapas de **Interpretación**, **Planeación** y **Generación**, lo que garantiza respuestas estructuradas y precisas.
-- **Reflection Layer**: Capa de auto-auditoría que revisa respuestas y código contra los hechos reales del sistema para corregir alucinaciones.
+- **Hybrid RAG & RRF (`backend/core/hybrid_retriever.py`)**: Fusión matemática de rankings densos (ChromaDB) y léxicos exactos (BM25 Okapi) para cero pérdida de términos técnicos.
+- **Memoria Episódica en 3 Capas (`backend/core/episodic_memory.py`)**: Sesión activa, hitos de proyectos a largo plazo persistidos atómicamente y perfil de usuario.
+- **Developer Loop con Sandbox AST (`backend/core/code_sandbox.py`)**: Validación estática AST, ejecución segura de suites de pruebas con timeout y auto-reparación técnica.
+- **Audio Streaming Chunked (<300ms) (`backend/core/tts_engine.py`)**: Segmentador fonético y streaming asíncrono con cancelación por interrupción (*Barge-in*).
+- **Headless Browser & Ingestión Dinámica (`backend/agents/browser_scraper.py`)**: Sanitización estricta de HTML a Markdown con blindaje SSRF contra cloud metadata y loopbacks IPv6.
+- **Protocolo MCP Universal (`backend/core/mcp_client.py`)**: Integración de herramientas externas mediante JSON-RPC 2.0 y guardrails de fidelidad fáctica (*Faithfulness Score*).
+- **Persistent Vision Eye (Ojo Persistente)**: Daemon en segundo plano (`core/vision_monitor.py`) con detección facial de OpenCV, comparación por Distancia de Hamming (pHash) y alertas proactivas.
+- **Kokoro-82M Voice Synthesis**: Motor neural local de alta fidelidad con ProcessPool aislado y cierre limpio sin fugas de RAM.
+- **Google Workspace & OAuth2**: Integración segura de APIs de Google (Gmail, Calendar).
+- **Reflection Layer & Guardrails**: Capa de auto-auditoría que evalúa afirmaciones contra los fragmentos de contexto RAG para prevenir alucinaciones.
+
 
 ## 🌐 Memoria y Grafo de Conocimiento Dinámico
 

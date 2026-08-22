@@ -22,8 +22,11 @@ from core.prompts import (
     VISION_ANALYSIS_PROMPT,
     VISION_ANALYSIS_PROMPT_BODY,     # FIX: sin identidad duplicada para stream
     NOVA_IDENTITY_PROMPT,
-    NOVA_SOCIAL_PROMPT,
-    NOVA_LEARNING_SUMMARY_PROMPT,    # v12.1.6: Prompt especializado
+    NOVA_IDENTITY_COMPACT,
+    # HOTFIX v13.9.1: NOVA_SOCIAL_PROMPT y NOVA_LEARNING_SUMMARY_PROMPT no existen
+    # Se usará NOVA_IDENTITY_PROMPT como fallback
+    # NOVA_SOCIAL_PROMPT,
+    # NOVA_LEARNING_SUMMARY_PROMPT,    # v12.1.6: Prompt especializado
 )
 from core.logging_config import get_logger, request_id_var
 from services.memory_service import memory_service
@@ -32,16 +35,17 @@ from core.task_queue import task_queue
 from core.cache import smart_cache
 from core.guard import prompt_guard
 from core.intent_classifier import classify_intent
-from core.database import SessionLocal, UserProfile, Feedback, ChatLog
+from core.database import SessionLocal, UserProfile, Feedback, ChatLog, ApprovalRequest
 from core.project_manager import project_manager
 from core.config import ENABLE_AUTO_GIT_VERSIONING
 from core.git_versioning import git_versioning
 from core.skill_manager import skill_manager
 from core.tool_executor import tool_executor
 
-# v11.9.22: Estado global para aprobación de herramientas (Human-in-the-Loop)
-# En una app multi-usuario esto debería ir a Redis/DB, pero para uso local en PC basta un dict.
-pending_tools = {} # user_id -> {"tool": "terminal", "command": "...", "original_query": "..."}
+# v13.9.1 CRÍTICO FIX: State global reemplazado por BD con transacciones ACID
+# El diccionario global causaba race conditions en multi-usuario
+# AHORA: Usar tabla ApprovalRequest en SQLite
+
 
 
 logger = get_logger("services.chat")
@@ -63,7 +67,8 @@ class ChatService:
             request_id = request_id_var.get()
 
         # v11.9.23: Human-in-the-Loop para Standard Query (Aprobación de herramientas)
-        if user_id in pending_tools:
+        pending_req = db.query(ApprovalRequest).filter_by(user_id=user_id).first()
+        if pending_req:
             approval_query = query.lower().strip()
             if any(x in approval_query for x in ["si", "yes", "aceptar", "dale", "autorizo", "procede"]):
                 # Para consultas standard (no stream), usamos un generador interno y capturamos el resultado final
@@ -76,7 +81,8 @@ class ChatService:
                     except: continue
                 return {"query": query, "answer": answer.strip(), "mode": "tool_execution", "needs_research": False}
             elif any(x in approval_query for x in ["no", "cancelar", "detente", "abortar"]):
-                del pending_tools[user_id]
+                db.delete(pending_req)
+                db.commit()
                 return {"query": query, "answer": "Entendido. He cancelado la ejecución de la herramienta.", "mode": "chat"}
 
         # 1. Security Check (Prompt Guard)
@@ -108,9 +114,36 @@ class ChatService:
              answer = llm_answer.strip() if llm_answer else "Lo siento, hubo un error al obtener la auditoría del sistema."
              return {"query": query, "answer": answer, "mode": "system_audit", "needs_research": False}
 
-        # 1.6 Tool Use Prevention (v13.6.4: Protejer contra mal uso en saludos)
-        is_social_only = len(query.split()) <= 6 and any(x in query.lower() for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
-        is_general_query = is_social_only or (intent == "CONVERSATION")
+        # 1.6 Identity Query Check (v13.9.2: Responder directamente a "¿Quién eres?")
+        query_lower = query.lower()
+        identity_patterns = [
+            r"quie?n\s+(?:eres|es|soy)",
+            r"qui[eé]n\s+te\s+cre[oó]",
+            r"qu[eé]\s+eres",
+            r"tu\s+identidad",
+            r"cu[ée]l\s+es\s+tu\s+nombre"
+        ]
+        if any(re.search(pat, query_lower) for pat in identity_patterns):
+            identity_answer = (
+                "Soy **NOVA**, un Sistema Autónomo de IA para Investigación (Autonomous Research AI System).\n\n"
+                "**Creador:** Juan Ramón\n"
+                "**Versión:** v13.9.1 - \"Sensory Awareness & Neural Voice\"\n"
+                "**Stack:** FastAPI + Next.js + ChromaDB + Ollama + LightRAG\n\n"
+                "Mi propósito es colaborar contigo en investigación autónoma, desarrollo de proyectos y análisis profundo. "
+                "Tengo acceso a múltiples agentes especializados: Planner, Explorer, Analyzer, Critic, Verifier, Librarian y Browser.\n\n"
+                "¿Qué necesitas que investiguemos hoy?"
+            )
+            return {"query": query, "answer": identity_answer, "mode": "identity_query"}
+        
+        # 1.7 Tool Use Prevention (v13.6.4: Protejer contra mal uso en saludos)
+        general_query_patterns = [
+            "que sabes", "que has aprendido", "dime que aprendiste", "hola",
+            "quien eres", "quien soy", "en que estamos trabajando",
+            "cual es mi nombre", "que estamos haciendo", "como estas",
+            "qué tal", "buenos dias", "saludos"
+        ]
+        is_social_only = len(query.split()) <= 12 and any(x in query_lower for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
+        is_general_query = any(x in query_lower for x in general_query_patterns) or (intent == "CONVERSATION")
 
         if intent == "PROJECT_BUILD":
             try:
@@ -188,7 +221,8 @@ class ChatService:
             await system_service.track_metric("cache_misses")
 
         # v11.8.0: FAST LANE en Standard Query
-        system_id = NOVA_SOCIAL_PROMPT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
+        # v13.9.5 FIX: Usar NOVA_IDENTITY_COMPACT para CONVERSATION para liberar tokens
+        system_id = NOVA_IDENTITY_COMPACT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
         
         # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
         _LEARNING_SUMMARY_PATTERNS = [
@@ -200,7 +234,8 @@ class ChatService:
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
         if is_learning_summary:
-            system_id = NOVA_LEARNING_SUMMARY_PROMPT
+            # Para resumen de aprendizaje, usar prompt completo
+            system_id = NOVA_IDENTITY_PROMPT
 
         # Omitir RAG pesado si es chat social
         context = ""
@@ -216,8 +251,13 @@ class ChatService:
  
         # v11.9.22: Skill Injection (Universal para que NOVA no alucine sobre su entorno)
         active_skills = ["terminal_skill", "browser_navigation_skill"]
-        skills_context = skill_manager.get_active_skills_context(active_skills)
+        skills_context = ""
+        if intent != "CONVERSATION":
+            skills_context = skill_manager.get_active_skills_context(active_skills)
  
+        # v13.9.5 FIX CRÍTICO: Inyectar historial de conversación previa
+        chat_history = memory_service.get_recent_chat_history(user_id, db, num_turns=5)
+        
         # Construcción de mensajes final
         if intent == "CONVERSATION":
             # v13.8.16: Incluir contexto de archivos incluso en charla social para evitar que NOVA ignore adjuntos
@@ -226,9 +266,11 @@ class ChatService:
                 user_content = f"{files_context}\n\nMENSAJE DEL USUARIO: {query}"
             
             messages = [
-                {"role": "system", "content": system_id + skills_context},
-                {"role": "user", "content": user_content}
+                {"role": "system", "content": system_id + skills_context}
             ]
+            # Inyectar historial
+            messages.extend(chat_history)
+            messages.append({"role": "user", "content": user_content})
         else:
             prompt = KNOWLEDGE_QUERY_PROMPT_BODY.format(
                 query=query, 
@@ -237,7 +279,10 @@ class ChatService:
                 files_context=files_context,
                 current_time=current_time
             )
-            messages = [{"role": "system", "content": system_id}, {"role": "user", "content": prompt}]
+            messages = [{"role": "system", "content": system_id}]
+            # Inyectar historial
+            messages.extend(chat_history)
+            messages.append({"role": "user", "content": prompt})
         
         # 5. LLM Execution
         try:
@@ -247,7 +292,6 @@ class ChatService:
             # v11.9.23: Detect Tool Call in Standard Chat
             if llm_answer:
                 # Extraer bloque JSON asumiendo que el LLM puede incluir explicaciones antes
-                import json
                 
                 # Buscar cualquier cosa que parezca un JSON de tool
                 if '"tool"' in llm_answer:
@@ -263,16 +307,25 @@ class ChatService:
                             # 1. Detect Terminal
                             if tool_name == "terminal" and "command" in tool_data:
                                 command = tool_data["command"]
-                                pending_tools[user_id] = {
-                                    "tool": "terminal",
-                                    "command": command,
-                                    "original_query": query
-                                }
+                                db.query(ApprovalRequest).filter_by(user_id=user_id).delete()
+                                new_req = ApprovalRequest(
+                                    user_id=user_id,
+                                    tool="terminal",
+                                    data=json.dumps({"command": command}),
+                                    original_query=query
+                                )
+                                db.add(new_req)
+                                db.commit()
                                 msg = f"{text_before}\n\n" if text_before else ""
+                                formatted_command = "\n".join(f"> {line}" for line in str(command).splitlines())
                                 msg += (
                                     f"> [!CAUTION]\n"
                                     f"> **NOVA solicita ejecutar un comando de terminal:**\n"
-                                    f"> ```bash\n{command}\n```\n"
+                                    f">\n"
+                                    f"> ```bash\n"
+                                    f"{formatted_command}\n"
+                                    f"> ```\n"
+                                    f">\n"
                                     f"> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
                                 )
                                 return {"query": query, "answer": msg, "mode": "tool_approval", "needs_research": False}
@@ -280,11 +333,15 @@ class ChatService:
                             # 2. Detect Browser
                             elif tool_name == "browser" and "objective" in tool_data:
                                 objective = tool_data["objective"]
-                                pending_tools[user_id] = {
-                                    "tool": "browser",
-                                    "objective": objective,
-                                    "original_query": query
-                                }
+                                db.query(ApprovalRequest).filter_by(user_id=user_id).delete()
+                                new_req = ApprovalRequest(
+                                    user_id=user_id,
+                                    tool="browser",
+                                    data=json.dumps({"objective": objective}),
+                                    original_query=query
+                                )
+                                db.add(new_req)
+                                db.commit()
                                 msg = f"{text_before}\n\n" if text_before else ""
                                 msg += (
                                     f"> [!IMPORTANT]\n"
@@ -296,14 +353,19 @@ class ChatService:
                         except Exception as e:
                             pass # Fallback a texto plano si falla el parseo
 
-            # v11.9.8: Explicit Memory Confirmation
+            # v11.9.8: Explicit Memory Confirmation (moved to background to avoid blocking)
             memory_confirmed = ""
-            # Buscamos patrones de memoria en la query original para asegurar confirmación incluso en CONVERSATION
+            # Buscamos patrones de memoria en la query original para encolar extracción en background
             from core.intent_classifier import _MEMORY_TRIGGERS
             if any(re.search(pat, query, re.I) for pat in _MEMORY_TRIGGERS) or intent == "KNOWLEDGE":
-                conf = await memory_service.extract_and_store_memory(query, user_id)
-                if conf:
-                    memory_confirmed = f"\n\n> [!TIP]\n> **{conf}**"
+                try:
+                    if background_tasks:
+                        background_tasks.add_task(memory_service.extract_and_store_memory, query, user_id)
+                    else:
+                        asyncio.create_task(memory_service.extract_and_store_memory(query, user_id))
+                except Exception:
+                    # Fallback silencioso: si no podemos encolar, no bloqueamos la respuesta
+                    pass
 
             if not llm_answer or "INSUFFICIENT_KNOWLEDGE" in llm_answer.upper():
                 return await self._format_research_fallback(query, llm_answer)
@@ -354,13 +416,15 @@ class ChatService:
         # Removido (v13.9.5): Se extrae explícitamente al final del stream
 
         # v11.9.22: Human-in-the-Loop - Verificar si el usuario respondió a una aprobación pendiente
-        if user_id in pending_tools:
+        pending_req = db.query(ApprovalRequest).filter_by(user_id=user_id).first()
+        if pending_req:
             approval_query = query.lower().strip()
             if any(x in approval_query for x in ["si", "yes", "aceptar", "dale", "autorizo", "procede"]):
                 async for chunk in self._execute_pending_tool(user_id, db): yield chunk
                 return
             elif any(x in approval_query for x in ["no", "cancelar", "detente", "abortar"]):
-                del pending_tools[user_id]
+                db.delete(pending_req)
+                db.commit()
                 yield f"data: {json.dumps({'type': 'chunk', 'text': '❌ Acción cancelada por el usuario. ¿En qué más puedo ayudarte?'})}\n\n"
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 return
@@ -514,7 +578,9 @@ class ChatService:
         
         # v11.8.0: FAST LANE - Usar identidad minimalista para conversaciones sociales
         # para reducir el tiempo de respuesta en CPU.
-        system_id = NOVA_SOCIAL_PROMPT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
+        # v13.9.5 FIX: Aplicar NOVA_IDENTITY_COMPACT también para CONVERSATION intent
+        # para liberar tokens para historial y RAG
+        system_id = NOVA_IDENTITY_COMPACT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
         
         # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
         _LEARNING_SUMMARY_PATTERNS = [
@@ -526,7 +592,8 @@ class ChatService:
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
         if is_learning_summary:
-            system_id = NOVA_LEARNING_SUMMARY_PROMPT
+            # Para resumen de aprendizaje, usar prompt completo para garantizar coherencia
+            system_id = NOVA_IDENTITY_PROMPT
         
         # En el carril rápido, enviamos la query cruda sin el template largo de RAG
         # para ahorrar otros ~200 tokens de prefill.
@@ -540,12 +607,21 @@ class ChatService:
 
         # v11.9.22: Skill Injection en Stream (Universal)
         active_skills = ["terminal_skill", "browser_navigation_skill"]
-        skills_context = skill_manager.get_active_skills_context(active_skills)
+        skills_context = ""
+        if intent != "CONVERSATION":
+            skills_context = skill_manager.get_active_skills_context(active_skills)
 
+        # v13.9.5 FIX CRÍTICO: Inyectar historial de conversación previa
+        # En lugar de solo [system, user], ahora usamos [system, ...history, user]
+        chat_history = memory_service.get_recent_chat_history(user_id, db, num_turns=5)
+        
         messages = [
-            {"role": "system", "content": system_id + skills_context},
-            {"role": "user", "content": final_user_content}
+            {"role": "system", "content": system_id + skills_context}
         ]
+        # Inyectar historial previo (evitar duplicar el último turno si está en cache)
+        messages.extend(chat_history)
+        # Finalmente, añadir el mensaje actual del usuario
+        messages.append({"role": "user", "content": final_user_content})
         
         try:
             yield f"data: {json.dumps({'type': 'meta', 'results_count': 1})}\n\n"
@@ -561,7 +637,7 @@ class ChatService:
                 # --- Lógica de Audio Streaming (Sentencia por Sentencia) ---
                 sentence_buffer += chunk
                 # Detectar fin de frase: punto, exclamación o interrogación seguidos de espacio o fin de línea
-                if any(punct in chunk for punct in [". ", "! ", "? ", ".\n", "!\n", "?\n"]):
+                if any(punct in sentence_buffer for punct in [". ", "! ", "? ", ".\n", "!\n", "?\n"]):
                     # Dividir buffer en sentencias completas
                     parts = re.split(r'(?<=[.!?])\s+', sentence_buffer)
                     if len(parts) > 1:
@@ -589,18 +665,26 @@ class ChatService:
 
                 # v12.1.3: Tool use detection (Regex robusto y flexible)
                 if '"tool"' in full_response:
-                    # v12.1.3: Detección de intenciones generales para evitar alucinaciones de herramientas
-                    # v13.6.4: Sensibilidad aumentada (4 -> 6 palabras) y bloqueo total por intención
-                    is_social_only = word_count <= 6 and any(x in query.lower() for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
-                    is_meta_only = any(x in query.lower() for x in ["que sabes", "que has aprendido", "quién eres"])
+                    query_lower = query.lower()
+                    is_social_only = word_count <= 12 and any(x in query_lower for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
+                    is_meta_only = any(x in query_lower for x in ["que sabes", "que has aprendido", "quién eres", "quien soy", "en que estamos trabajando", "cual es mi nombre", "que estamos haciendo"])
                     is_general_query = is_social_only or is_meta_only or (intent == "CONVERSATION")
                     
                     # Interceptor Genérico (v13.0)
-                    async for tool_chunk in self._intercept_tool_generic(user_id, full_response, query, is_general_query): 
+                    async for tool_chunk in self._intercept_tool_generic(user_id, full_response, query, db, is_general_query): 
                         yield tool_chunk
-                    if user_id in pending_tools: return # Detener stream si se interceptó
+                    if db.query(ApprovalRequest).filter_by(user_id=user_id).first(): return # Detener stream si se interceptó
 
                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+                
+            # Flush final del buffer de audio para asegurar que lea la última oración
+            if sentence_buffer.strip() and len(sentence_buffer.strip()) > 10:
+                s_clean = sentence_buffer.strip()
+                from core.config import DATA_DIR
+                cache_key = hashlib.md5(f"{s_clean}{1.0}{0}{nova_voice._model_name}{nova_voice.engine}".encode()).hexdigest()
+                asyncio.create_task(nova_voice.synthesize(s_clean))
+                yield f"data: {json.dumps({'type': 'audio', 'key': cache_key})}\n\n"
+                sentence_buffer = ""
 
             # Reflection (Critic) - Only for serious intents (Skip for pure CONVERSATION)
             if intent in ["RESEARCH", "KNOWLEDGE", "CODE"]:
@@ -614,14 +698,16 @@ class ChatService:
             if "tardó demasiado" not in full_response and not has_attachments:
                 smart_cache.set(query, llm_client.model, cache_params, str(user_id), full_response)
 
-            # v11.9.8: Explicit Memory Confirmation (Universal al final del stream)
+            # v11.9.8: Explicit Memory Confirmation (moved to background to avoid blocking)
             from core.intent_classifier import _MEMORY_TRIGGERS
             if any(re.search(pat, query, re.I) for pat in _MEMORY_TRIGGERS) or intent == "KNOWLEDGE":
-                conf = await memory_service.extract_and_store_memory(query, user_id)
-                if conf:
-                    conf_msg = f"\n\n> [!TIP]\n> **{conf}**"
-                    yield f"data: {json.dumps({'type': 'chunk', 'text': conf_msg})}\n\n"
-                    full_response += conf_msg
+                try:
+                    if background_tasks:
+                        background_tasks.add_task(memory_service.extract_and_store_memory, query, user_id)
+                    else:
+                        asyncio.create_task(memory_service.extract_and_store_memory(query, user_id))
+                except Exception:
+                    pass
 
             # Save to chat history DB
             try:
@@ -757,7 +843,7 @@ class ChatService:
             final_response += chunk
         return final_response
 
-    async def _intercept_tool_generic(self, user_id: int, full_text: str, original_query: str, is_general: bool = False) -> AsyncGenerator[str, None]:
+    async def _intercept_tool_generic(self, user_id: int, full_text: str, original_query: str, db: Any, is_general: bool = False) -> AsyncGenerator[str, None]:
         """Interceptor universal para herramientas en formato JSON."""
         try:
             match = re.search(r'\{.*"tool":\s*"([^"]+)".*\}', full_text, re.DOTALL)
@@ -785,17 +871,28 @@ class ChatService:
             if not desc or str(desc).lower() == "undefined":
                 desc = f"Acción de {tool}"
                 
-            pending_tools[user_id] = {"tool": tool, "data": data, "original_query": original_query}
+            db.query(ApprovalRequest).filter_by(user_id=user_id).delete()
+            new_req = ApprovalRequest(
+                user_id=user_id,
+                tool=tool,
+                data=json.dumps(data),
+                original_query=original_query
+            )
+            db.add(new_req)
+            db.commit()
             icons = {"terminal": "💻", "browser": "🌐", "gws": "📅", "vision": "👁️"}
             icon = icons.get(tool, "🛠️")
             msg = f"\n\n> [!IMPORTANT]\n> {icon} **NOVA solicita usar la herramienta: {tool.upper()}**\n> **Acción:** {desc}\n"
 
-            if tool == "terminal": msg += f"> ```bash\n{data.get('command')}\n```\n"
+            if tool == "terminal":
+                cmd_str = str(data.get('command') or '')
+                formatted_cmd = "\n".join(f"> {line}" for line in cmd_str.splitlines())
+                msg += f">\n> ```bash\n{formatted_cmd}\n> ```\n>\n"
             elif tool == "gws": msg += f"> **Módulo:** {data.get('action')} | **Comando:** {data.get('command')}\n"
             elif tool == "vision":
                 msg += f"> **Operación:** {data.get('action')}\n"
                 if data.get("x") is not None: msg += f"> **Coordenadas:** ({data.get('x')}, {data.get('y')})\n"
-            msg += f"> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
+            msg += f">\n> *¿Autorizas esta acción? (Escribe **Sí** para proceder o **No** para cancelar)*"
             yield f"data: {json.dumps({'type': 'chunk', 'text': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
@@ -803,8 +900,17 @@ class ChatService:
 
     async def _execute_pending_tool(self, user_id: int, db: Any) -> AsyncGenerator[str, None]:
         """Ejecuta la herramienta aprobada y re-alimenta a NOVA."""
-        pending_data = pending_tools.pop(user_id, None)
-        if not pending_data: return
+        pending_req = db.query(ApprovalRequest).filter_by(user_id=user_id).first()
+        if not pending_req: return
+        
+        pending_data = {
+            "tool": pending_req.tool,
+            "original_query": pending_req.original_query
+        }
+        pending_data.update(json.loads(pending_req.data))
+        
+        db.delete(pending_req)
+        db.commit()
         
         tool = pending_data.get("tool")
         observation = ""

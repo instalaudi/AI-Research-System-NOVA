@@ -1,21 +1,29 @@
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile, status
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import StreamingResponse, Response
 from starlette.responses import JSONResponse
 import os
 import sys
 
-# v12.1.0: Silenciador Maestro de Telemetría y Modo Offline
+# v13.9.5: Asegurar UTF-8 en todos los subprocesos (Windows fix)
+os.environ['PYTHONIOENCODING'] = 'utf-8:replace'
+
+# v13.9.1: Evitar caídas por codificación Unicode (UTF-8) en consolas Windows (CP1252)
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+except Exception:
+    pass
+
+# v12.1.0: Silenciador Maestro de Telemetría
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_TELEMETRY_DISABLED"] = "True"
 os.environ["TELEMETRY_DISABLED"] = "True"
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
+# Removido el force global offline para permitir descarga de modelos faltantes
 
 # Monkeypatch para posthog (Evita error 'capture() takes 1 positional argument but 3 were given')
 try:
-    import posthog
     class MockPosthog:
         def capture(self, *args, **kwargs): pass
         def identify(self, *args, **kwargs): pass
@@ -23,10 +31,10 @@ try:
         def __getattr__(self, name):
             # Devolver un callable no-op seguro para cualquier submódulo o atributo importado/llamado
             return lambda *args, **kwargs: None
-    sys.modules["posthog"] = MockPosthog()
-    posthog.capture = lambda *args, **kwargs: None
-    posthog.disabled = True
-except ImportError:
+    mock = MockPosthog()
+    mock.disabled = True
+    sys.modules["posthog"] = mock
+except Exception:
     pass
 
 from slowapi.errors import RateLimitExceeded
@@ -44,18 +52,18 @@ from core.logging_config import setup_logging, request_id_var, get_logger
 # AI System Core Imports
 from core.orchestrator import orchestrator
 from core.task_queue import task_queue
-from core.logger import agent_logger
-from core.config import CORS_ORIGINS, CHAT_HISTORY_MAX_SIZE, MAX_QUERY_LENGTH, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, COGNITIVE_MODE, LLM_FAST_MODEL
+from core.config import CORS_ORIGINS, LLM_FAST_MODEL
 # FIX: Solo importar los prompts que se usan activamente en este modulo.
 # Los demas se importan en cada router segun necesidad.
 from core.health_monitor import run_health_monitor
-from core.sandbox import sandbox
-from core.database import get_db, SessionLocal, init_db
+from core.database import SessionLocal, init_db, KnowledgeEntry
 from core.llm_client import llm_client
-from core.controller import cognitive_controller
-from core.config import LLM_MODEL_NAME, CHROMA_DB_PATH, OLLAMA_URL, LLM_EMBED_MODEL
+from core.config import (
+    OLLAMA_URL, LLM_EMBED_MODEL, LLM_DEV_URL, LLM_AUDIT_URL,
+    LLM_AUDIT_MODEL, LLM_VISION_MODEL,
+)
 from core.self_evolution import nova_self_evolution, run_self_evolution_scheduler
-from core.distillation import nova_distillation, run_distillation_scheduler
+from core.distillation import run_distillation_scheduler
 from core.tts_engine import nova_voice
 from core.proactive import run_proactive_scheduler, run_telegram_polling
 from core.integrity import check_system_integrity
@@ -114,22 +122,31 @@ async def lifespan(app: FastAPI):
         """v11.9.18: Pre-cargar modelo de embeddings al arranque para evitar
         latencia de 13s+ en la primera query RAG del usuario."""
         try:
-            # Desactivar verificaciones HTTP a HuggingFace (el modelo ya está en caché local)
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
             logger.info(f"[MODEL] Pre-cargando modelo de embeddings '{LLM_EMBED_MODEL}'...")
+            # Intento 1: Offline mode
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
             embed_model = await asyncio.to_thread(llm_client._get_local_model)
+            
+            # Intento 2: Online mode (if missing)
+            if not embed_model:
+                logger.warning(f"[!] Falló carga offline. Intentando descarga online de '{LLM_EMBED_MODEL}'...")
+                os.environ["HF_HUB_OFFLINE"] = "0"
+                os.environ["TRANSFORMERS_OFFLINE"] = "0"
+                llm_client._local_embed_model = None
+                embed_model = await asyncio.to_thread(llm_client._get_local_model)
+
             if embed_model:
-                logger.info(f"[OK] Modelo de embeddings '{LLM_EMBED_MODEL}' listo (modo offline)")
+                logger.info(f"[OK] Modelo de embeddings '{LLM_EMBED_MODEL}' cargado y listo")
             else:
-                logger.warning("[!] No se pudo pre-cargar el modelo de embeddings")
+                logger.warning("[!] Definitivamente falló la carga del modelo de embeddings")
         except Exception as e:
-            logger.error(f"[!] Error pre-cargando embeddings: {e}")
+            logger.error(f"[!] Excepción crítica cargando embeddings: {e}")
 
     # Ejecutar tareas críticas en paralelo con un timeout de seguridad de 120 segundos
     from core.regression_guard import run_regression_checks
     try:
-        await asyncio.wait_for(
+        results = await asyncio.wait_for(
             asyncio.gather(
                 check_system_integrity(), # INTEGRITY ya usa su propio logger interno
                 _safe_load_whisper(),
@@ -140,6 +157,9 @@ async def lifespan(app: FastAPI):
             ),
             timeout=120.0
         )
+        for idx, res in enumerate(results):
+            if isinstance(res, Exception):
+                logger.error(f"[!] Tarea de arranque {idx} falló con excepción: {res}")
     except asyncio.TimeoutError:
         logger.error("[!] Excedido el tiempo límite de arranque de 120s en el gather inicial de subsistemas.")
     
@@ -147,41 +167,49 @@ async def lifespan(app: FastAPI):
     orchestrator.start()
     logger.info("[OK] Todos los subsistemas listos")
 
-    # v10.14.0: Warm-up Secuencial - Evita picos de I/O de disco y saturacion de RAM al arrancar.
-    logger.info("[WARMUP] Pre-calentando modelos LLM en RAM (warm-up SECUENCIAL)...")
+    # v10.14.0: Warm-up por motor — cada modelo en su puerto (11438/11439/11440).
+    logger.info("[WARMUP] Pre-calentando modelos LLM por motor (secuencial)...")
     async def _warmup():
         try:
             import httpx as _httpx
-            warmup_models = [LLM_FAST_MODEL] 
-            _url = OLLAMA_URL.rsplit("/api/", 1)[0] if "/api/" in OLLAMA_URL else OLLAMA_URL
-            
-            for _model in warmup_models:
-                success = False
+            from core.config import LLM_CODER_MODEL, LLM_MODEL_NAME
+
+            def _base_url(chat_url: str) -> str:
+                return chat_url.rsplit("/api/", 1)[0] if "/api/" in chat_url else chat_url
+
+            async def _warmup_on_engine(chat_url: str, model: str, engine_label: str) -> None:
+                base = _base_url(chat_url)
                 for attempt in range(3):
                     try:
-                        _payload = {
-                            "model": _model,
+                        num_threads = int(os.getenv("OLLAMA_THREADS", str(os.cpu_count() or 8)))
+                        payload = {
+                            "model": model,
                             "messages": [{"role": "user", "content": "warmup"}],
                             "stream": False,
-                            "options": {"num_predict": 1, "num_thread": 4}
+                            "options": {"num_predict": 1, "num_thread": num_threads},
                         }
-                        async with _httpx.AsyncClient(timeout=60.0) as _c:
-                            _r = await _c.post(f"{_url}/api/chat", json=_payload)
-                        if _r.status_code == 200:
-                            logger.info(f"  [OK] Warm-up OK: {_model}")
-                            success = True
-                            await asyncio.sleep(2)
-                            break
-                        else:
-                            logger.warning(f"  [!] Warm-up {_model} attempt {attempt+1} failed with status {_r.status_code}")
-                    except Exception as _e:
-                        logger.warning(f"  [!] Warm-up {_model} attempt {attempt+1} error: {_e}")
-                    
-                    if not success and attempt < 2:
+                        async with _httpx.AsyncClient(timeout=120.0) as client:
+                            resp = await client.post(f"{base}/api/chat", json=payload)
+                        if resp.status_code == 200:
+                            logger.info(f"  [OK] Warm-up {engine_label}: {model} @ {base}")
+                            return
+                        logger.warning(
+                            f"  [!] Warm-up {engine_label} {model} intento {attempt + 1}: HTTP {resp.status_code}"
+                        )
+                    except Exception as exc:
+                        logger.warning(f"  [!] Warm-up {engine_label} {model} intento {attempt + 1}: {exc}")
+                    if attempt < 2:
                         await asyncio.sleep(5)
-                
-                    if not success:
-                        logger.error(f"[ERROR] Fallo crítico de warm-up para {_model} tras 3 intentos. ¿Ollama está corriendo?")
+                logger.error(f"[ERROR] Warm-up fallido: {engine_label} / {model} @ {base}")
+
+            engine_plan = [
+                ("Motor-1 Chat", OLLAMA_URL, [LLM_FAST_MODEL, LLM_MODEL_NAME]),
+                ("Motor-2 Dev", LLM_DEV_URL, [LLM_CODER_MODEL]),
+                ("Motor-3 Audit", LLM_AUDIT_URL, [LLM_AUDIT_MODEL, LLM_VISION_MODEL]),
+            ]
+            for label, chat_url, models in engine_plan:
+                for model in dict.fromkeys(models):
+                    await _warmup_on_engine(chat_url, model, label)
         except Exception as _e:
             logger.error(f"[!] Warm-up error: {_e}")
 
@@ -199,12 +227,12 @@ async def lifespan(app: FastAPI):
     # FIX: Aumentar retraso a 30s para evitar solapamiento con el warm-up en hardware lento.
     # FIX: Guardar referencia para cancelar limpiamente en el cierre.
     async def _deferred_recovery():
-        print("[TaskQueue] Recovery scan delayed 30s (waiting for warm-up to finish)...")
+        logger.info("[TaskQueue] Recovery scan delayed 30s (waiting for warm-up to finish)...")
         await asyncio.sleep(30)
         try:
             await task_queue.recovery_scan(orchestrator.handle_task)
         except Exception as _rec_err:
-            print(f"[TaskQueue] Recovery scan error: {_rec_err}")
+            logger.error(f"[TaskQueue] Recovery scan error: {_rec_err}")
     recovery_task = asyncio.create_task(_deferred_recovery())
     
     # PHASE 5: Verificar si acabamos de volver de un reinicio autónomo
@@ -231,6 +259,14 @@ async def lifespan(app: FastAPI):
             reboot_task, vision_task  # v13.8.18: Incluir Vision Monitor en shutdown
         ]
         bg_tasks = [t for t in bg_tasks if t is not None]
+        # C1: Detener vision monitor y liberar cámara antes de cancelar la tarea
+        try:
+            from core.vision_monitor import get_vision_monitor
+            get_vision_monitor().stop()
+            logger.info("[OK] Cámara y recursos de visión liberados.")
+        except Exception as e:
+            logger.error(f"[!] Error liberando recursos de visión: {e}")
+
         for _t in bg_tasks:
             if not _t.done():
                 _t.cancel()
@@ -246,16 +282,18 @@ async def lifespan(app: FastAPI):
             task_queue.workers.clear()
             
         await llm_client.close()
+        nova_voice.shutdown()
         app.state.stt_model = None
         print("Shutting down...")
+
 
 setup_logging()
 logger = get_logger("main")
 
 app = FastAPI(
-    title="NOVA v13.7 (Overdrive Phase 1)",
-    description="NOVA v13.7 - Structural Stabilization & Contextual Intelligence",
-    version="13.7.0",
+    title="NOVA v13.8 (Overdrive Phase 1)",
+    description="NOVA v13.8 - Structural Stabilization & Contextual Intelligence",
+    version="13.8.18",
     lifespan=lifespan
 )
 
@@ -291,12 +329,17 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}))
 
 # SEC-03: Dynamic CORS configuration based on environment
+# v13.9.1 FIX (M-8): Evitar wildcard en allow_origins si allow_credentials=True
+_origins = [origin.strip() for origin in CORS_ORIGINS if origin.strip() and origin.strip() != "*"]
+if not _origins:
+    _origins = ["http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in CORS_ORIGINS],
+    allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 # --- ROUTERS INTEGRATION ---
@@ -309,6 +352,30 @@ app.include_router(proactive_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")   # v10.1 - Acceso via /api/metrics
 app.include_router(graph_router, prefix="/api")     # v10.3 - Acceso via /api/graph/health
+
+
+async def get_system_info() -> dict:
+    """v13.9.6: Retorna metadatos del sistema (modelo, arquitectura y estado de agentes) para diagnóstico."""
+    from core.logger import agent_logger
+    from core.config import LLM_MODEL_NAME
+    
+    db = SessionLocal()
+    try:
+        # Consulta de verificación para inicializar/usar el modelo
+        _ = db.query(KnowledgeEntry).count()
+    except Exception:
+        pass
+    finally:
+        db.close()
+        
+    agents_data = await agent_logger.get_data()
+    agents_status = agents_data.get("agents", {})
+    
+    return {
+        "model": LLM_MODEL_NAME,
+        "architecture": "Cognitive Controller (Expert Edition)",
+        "agents_status": agents_status
+    }
 
 
 if __name__ == "__main__":

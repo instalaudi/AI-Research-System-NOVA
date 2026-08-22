@@ -90,8 +90,16 @@ class SmartCache:
         return None
 
     def set(self, prompt: str, model: str, params: Dict[str, Any], session_id: str, response: str):
-        """Almacena una respuesta en la caché con evicción LRU."""
+        """Almacena una respuesta en la caché con evicción LRU y cleanup de expirados."""
         key = self._generate_key(prompt, model, params, session_id)
+        
+        # v13.9.1 CRÍTICO FIX: Limpiar expired entries ANTES de agregar nuevas
+        # Previene memory leak donde entries expiradas nunca se eliminaban
+        current_time = time.time()
+        expired_keys = [k for k, v in self._cache.items() if current_time - v['timestamp'] >= self.ttl]
+        for expired_key in expired_keys:
+            del self._cache[expired_key]
+            logger.debug(f"Cache expired cleanup: {expired_key[:8]}...")
         
         # Si ya existe, actualizar y mover al final
         if key in self._cache:

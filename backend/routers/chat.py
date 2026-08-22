@@ -23,11 +23,22 @@ from core.git_versioning import git_versioning
 logger = get_logger("routers.chat")
 router = APIRouter(tags=["chat"])
 
+# v13.9.1 CRÍTICO FIX: Validación de tamaño de archivo
+MAX_AUDIO_SIZE_MB = 50  # Límite de 50MB para archivos de audio
+MAX_UPLOAD_SIZE_MB = 100  # Límite genérico de upload
+
 @router.post("/stt")
 async def speech_to_text(request: Request, audio: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     """
     Delegates speech-to-text processing to STTService.
+    v13.9.1: Agregar validación de tamaño de archivo.
     """
+    # v13.9.1 FIX: Validar tamaño antes de procesar
+    if audio.size and audio.size > MAX_AUDIO_SIZE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file too large (max {MAX_AUDIO_SIZE_MB}MB)"
+        )
     stt_model = request.app.state.stt_model
     text = await stt_service.transcribe_audio(audio, stt_model)
     return {"text": text}
@@ -103,10 +114,18 @@ async def get_audio_chunk(cache_key: str):
     v13.7.2: Entrega fragmentos de audio de la caché para streaming.
     Utilizado por el flujo de chat para reproducir voz frase por frase.
     """
+    import asyncio
     from core.tts_engine import CACHE_DIR
     path = CACHE_DIR / f"{cache_key}.wav"
+    
+    # Esperar hasta 15 segundos a que la tarea de fondo de síntesis termine
+    for _ in range(150):
+        if path.exists():
+            break
+        await asyncio.sleep(0.1)
+        
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Audio chunk not found")
+        raise HTTPException(status_code=404, detail="Audio chunk not found or synthesis timed out")
     return FileResponse(path, media_type="audio/wav")
 
 
@@ -124,6 +143,30 @@ async def text_to_speech(request: Request, current_user: User = Depends(get_curr
         media_type="audio/wav", 
         headers={"Content-Disposition": "inline; filename=nova_voice.wav"}
     )
+
+@router.post("/tts/stream")
+async def stream_text_to_speech(request: Request, current_user: User = Depends(get_current_user)):
+    """
+    v14.0: Emite fragmentos de audio en streaming mediante StreamingResponse.
+    Permite al frontend reproducir audio a medida que se sintetiza con Time-to-First-Audio < 300ms.
+    """
+    body = await request.json()
+    text = body.get("text", "").strip()
+    speed = float(body.get("speed", 1.0))
+    if not text:
+        raise HTTPException(status_code=400, detail="Text empty")
+        
+    async def _audio_generator():
+        async for chunk in nova_voice.synthesize_stream(text, speed=speed):
+            if chunk:
+                yield chunk
+
+    return StreamingResponse(
+        _audio_generator(),
+        media_type="audio/wav",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+    )
+
 
 @router.get("/tts/status")
 async def tts_status(current_user: User = Depends(get_current_user)):
@@ -281,7 +324,7 @@ async def list_user_projects(current_user: User = Depends(get_current_user)):
 @router.delete("/projects/delete/{filename}")
 async def delete_project(filename: str, current_user: User = Depends(get_current_user)):
     """
-    Elimina un proyecto ZIP específico del usuario.
+    Elimina un proyecto ZIP específico del usuario directamente desde el almacenamiento físico.
     """
     from pathlib import Path
     import os
@@ -297,10 +340,12 @@ async def delete_project(filename: str, current_user: User = Depends(get_current
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este archivo.")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Proyecto no encontrado.")
-        
+    
     try:
+        # Eliminar archivo ZIP físico en disco
         os.remove(file_path)
-        # Limpieza: Si existe una carpeta extraída asociada, borrarla también
+        
+        # Eliminar directorio extraído asociado si existe
         extracted_dir = projects_dir / f"{safe_filename.replace('.zip', '')}_extracted"
         if extracted_dir.exists() and extracted_dir.is_dir():
             shutil.rmtree(extracted_dir)

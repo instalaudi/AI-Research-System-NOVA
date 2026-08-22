@@ -1,5 +1,7 @@
 @echo off
 title NOVA BACKEND - ACTIVO
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8:replace
 :LOOP
 echo.
 echo [!] Realizando limpieza preventiva de recursos...

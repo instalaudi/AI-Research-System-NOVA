@@ -1,40 +1,29 @@
-import asyncio
+import pytest
+from unittest.mock import AsyncMock, patch
 from backend.agents.librarian import LibrarianAgent
 
+@pytest.mark.asyncio
 async def test_deduplication():
-    print("--- Testing Semantic Deduplication (L9) ---")
     agent = LibrarianAgent()
     
     article = {
         "title": "Quantum Supremacy in 2026",
         "summary": "AI systems reaching new heights in quantum error correction.",
-        "review_score": 9.2
+        "review_score": 0.92
     }
     
-    # First storage
-    print("Attempt 1: Storing new article...")
-    result1 = await agent.store(article)
-    assert result1 is True
-    
-    # Second storage (simulate duplicate check)
-    # Note: In the simulation, we'll need to update the librarian to actually mock a duplicate strike
-    print("Attempt 2: Storing identical article...")
-    # For simulation purposes, we'll manually set the librarian to "duplicate mode" 
-    # Or better, improve the librarian mock to have a internal set of titles
-    
-    # Let's improve the librarian for this test
-    agent.stored_titles = ["Quantum Supremacy in 2026"]
-    
-    # Overriding the simulated check logic for this specific test run
-    async def mocked_store(content):
-        if content.get("title") in agent.stored_titles:
-            print(f"[Mocked Librarian] Duplicate detected: {content.get('title')}")
-            return False
-        return True
-        
-    result2 = await mocked_store(article)
-    assert result2 is False
-    print("Deduplication: OK (Rejected second entry)")
-
-if __name__ == "__main__":
-    asyncio.run(test_deduplication())
+    with patch('core.llm_gateway.llm_gateway.chat', new_callable=AsyncMock) as mock_chat, \
+         patch('core.vector_db.vector_db.search_similar', new_callable=AsyncMock) as mock_vector, \
+         patch('core.knowledge_base.knowledge_base.add_entry', new_callable=AsyncMock) as mock_kb:
+         
+         mock_chat.return_value = '{"triplets": []}'
+         
+         # Test case 1: Not a duplicate
+         mock_vector.return_value = []
+         result1 = await agent.execute(article)
+         assert result1 is True
+         
+         # Test case 2: Duplicate detected
+         mock_vector.return_value = [{"distance": 0.10, "metadata": {"title": "Quantum Supremacy in 2026"}}]
+         result2 = await agent.execute(article)
+         assert result2 is False

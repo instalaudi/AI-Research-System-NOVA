@@ -485,9 +485,9 @@ class LLMClient:
 
     async def ensure_model_available(self, model_name: str) -> bool:
         try:
-            process = await asyncio.to_thread(subprocess.run, ["ollama", "list"], capture_output=True, text=True)
+            process = await asyncio.to_thread(subprocess.run, ["ollama", "list"], capture_output=True, text=True, encoding='utf-8', errors='replace')
             if model_name in process.stdout: return True
-            await asyncio.to_thread(subprocess.run, ["ollama", "pull", model_name], check=True)
+            await asyncio.to_thread(subprocess.run, ["ollama", "pull", model_name], check=True, encoding='utf-8', errors='replace')
             return True
         except: return False
 

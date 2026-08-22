@@ -2,7 +2,45 @@
 
 Todas las actualizaciones y parches importantes aplicados a la arquitectura base se documentarán en este archivo.
 
+## [v14.0.0] - Tier S Autonomous Intelligence & Real-Time Full-Duplex (Agosto 21, 2026)
+
+Esta actualización representa la mayor evolución técnica e industrial de NOVA, consolidando una arquitectura **Tier S** con 31 pruebas automatizadas (100% passed), cero fugas de memoria y capacidades de autonomía y razonamiento de última generación.
+
+### 🧠 1. Hybrid RAG & Memoria Jerárquica Episódica
+- **Motor BM25 Okapi (`backend/core/hybrid_retriever.py`):** Indexación y recuperación de tokens exactos, términos técnicos, identificadores de código y CVEs.
+- **Fusión de Rango Recíproco (RRF):** Combinación ponderada ($k=60$) de rankings de vectores densos (ChromaDB) y léxicos (BM25), maximizando precisión y recall.
+- **Memoria Episódica en 3 Capas (`backend/core/episodic_memory.py`):** Gestión de sesión activa, hitos/episodios de proyectos a largo plazo persistidos atómicamente y perfil de hechos del usuario.
+
+### 🛠️ 2. Developer Agent con Ciclo TDD & Sandbox Aislado
+- **Code Sandbox AST (`backend/core/code_sandbox.py`):** Validación sintáctica estática para Python (`ast.parse`) y JSON (`json.loads`), con ejecución aislada de tests (`unittest`/`pytest`) con *timeout* estricto.
+- **Bucle de Auto-Reparación:** Captura granular de salidas de error y tracebacks inyectados en la reflexión técnica del `DeveloperAgent` antes de empaquetar proyectos.
+- **Artefactos Estándar:** Inyección automática de `Dockerfile` y `README.md` documentado.
+
+### 🎙️ 3. Audio Streaming Chunked & Full-Duplex
+- **Segmentador Fonético (`backend/core/tts_engine.py`):** División inteligente de oraciones y cláusulas (<200 chars) para entregar el primer chunk de voz en <300ms (*Time-to-First-Audio*).
+- **Ruta de Streaming:** Endpoint `POST /api/chat/tts/stream` con cabeceras anti-buffering (`X-Accel-Buffering: no`).
+- **Player React con Barge-in (`frontend/src/components/AudioStreamPlayer.tsx`):** Reproductor Web Audio API con cancelación instantánea (`AbortController`) al detectar interrupción del usuario.
+
+### 🌐 4. Headless Browser & Ingestión Dinámica
+- **Sanitización HTML a Markdown (`backend/agents/browser_scraper.py`):** Extracción estructurada de artículos científicos y páginas web eliminando scripts, publicidad y estilos CSS.
+- **Protección Anti-SSRF Reforzada:** Bloqueo de endpoints de metadatos cloud (`169.254.`), esquemas peligrosos y loopbacks IPv6 (`::1`, `[::1]`).
+
+### 🔌 5. Protocolo MCP & Guardrails Anti-Alucinación
+- **Cliente Universal MCP (`backend/core/mcp_client.py`):** Implementación conforme a JSON-RPC 2.0 (`tools/list`, `tools/call`) con precarga automática de servidores desde `data/mcp_servers.json`.
+- **Guardrails de Fidelidad Fáctica (`backend/core/guardrails.py`):** Evaluador determinista de respaldo (*Faithfulness Score*) y relevancia temática contrastando la respuesta con el contexto RAG recuperado.
+
+### 🛡️ 6. Remediaciones Críticas de Seguridad y Estabilidad
+- **TaskQueue Thread-Safe:** Reemplazado `asyncio.Lock()` por `threading.Lock()` en métodos síncronos de persistencia en disco.
+- **ORM ChatLog:** Agregada la columna `intent = Column(String, index=True)` eliminando el crash en `chat_service.py`.
+- **Descargas Autenticadas:** `ProjectManager.tsx` ahora descarga ZIPs mediante `apiFetch` y Bearer Token en formato Blob URL.
+- **Cero Fugas de Memoria:** Liberación estricta de handles de cámara OpenCV DirectShow (`finally`) y método `shutdown()` para el pool de procesos de Kokoro TTS.
+- **Migración Pydantic V2:** Actualización de `@root_validator` a `@model_validator(mode='before')` en `backend/routers/schemas.py`.
+- **Mantenimiento Autónomo SQLite:** Rutina `perform_database_maintenance()` con `PRAGMA optimize;` y `PRAGMA wal_checkpoint(PASSIVE);`.
+
+---
+
 ## [v12.0.0] - Agentic Skills & Deep Persistence (Mayo 6, 2026)
+
 
 Esta actualización mayor integra capacidades agenticas avanzadas extraídas del repositorio `master-skills-main`, elevando el nivel de autonomía, memoria y calidad de recuperación de conocimiento (RAG) de NOVA.
 

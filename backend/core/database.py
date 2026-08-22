@@ -1,7 +1,10 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, Boolean, Index
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, Boolean, Index, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 import datetime
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "knowledge.db")
@@ -17,7 +20,7 @@ class User(Base):
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 class UserSession(Base):
     __tablename__ = 'user_sessions'
@@ -25,7 +28,7 @@ class UserSession(Base):
     user_id = Column(Integer, ForeignKey('users.id'))
     token_id = Column(String, index=True)
     expires_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 class KnowledgeEntry(Base):
     __tablename__ = 'knowledge_entries'
@@ -35,7 +38,7 @@ class KnowledgeEntry(Base):
     category = Column(String)
     score = Column(Float)
     content = Column(Text)
-    date = Column(DateTime, default=datetime.datetime.utcnow)
+    date = Column(DateTime, default=utc_now)
     url = Column(String)
     quality_flag = Column(String, default="full_pipeline")
     is_fallback = Column(Integer, default=0)
@@ -61,7 +64,7 @@ class KnowledgeNode(Base):
     id = Column(String, primary_key=True) 
     group = Column(Integer)
     description = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 class GraphLink(Base):
     __tablename__ = 'graph_links'
@@ -84,9 +87,9 @@ class ResearchJob(Base):
     stage = Column(String) # current agent/task type
     status = Column(String, default="pending") # pending, running, completed, failed
     retry_count = Column(Integer, default=0)
-    last_heartbeat = Column(DateTime, default=datetime.datetime.utcnow)
+    last_heartbeat = Column(DateTime, default=utc_now)
     data = Column(Text) # JSON blob for payload state
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     __table_args__ = (
         Index('ix_researchjob_status', 'status'),
@@ -97,7 +100,7 @@ class UserMemory(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True) # Linked to user
     insight = Column(Text)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     importance = Column(Integer, default=1)
 
 class ChatLog(Base):
@@ -106,11 +109,14 @@ class ChatLog(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True) # Linked to user
     role = Column(String) # 'user' or 'assistant'
     content = Column(Text)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    intent = Column(String, nullable=True) # e.g. 'PROJECT_BUILD', 'KNOWLEDGE', 'SYSTEM'
+    timestamp = Column(DateTime, default=utc_now)
     
     __table_args__ = (
         Index('ix_chatlog_user', 'user_id'),
+        Index('ix_chatlog_intent', 'intent'),
     )
+
 
 class Feedback(Base):
     __tablename__ = 'feedbacks'
@@ -119,7 +125,7 @@ class Feedback(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     rating = Column(String) # 'good', 'bad'
     comment = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
 
 class SystemMetrics(Base):
     __tablename__ = 'system_metrics'
@@ -130,7 +136,7 @@ class SystemMetrics(Base):
     cache_hits = Column(Integer, default=0)
     cache_misses = Column(Integer, default=0)
     avg_latency_ms = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=datetime.datetime.utcnow)
+    last_updated = Column(DateTime, default=utc_now)
 
 class UserProfile(Base):
     __tablename__ = 'user_profiles'
@@ -138,7 +144,7 @@ class UserProfile(Base):
     preferences = Column(Text, default="[]") # JSON list
     frequent_topics = Column(Text, default="[]") # JSON list
     persona_summary = Column(Text, nullable=True)
-    last_updated = Column(DateTime, default=datetime.datetime.utcnow)
+    last_updated = Column(DateTime, default=utc_now)
 
 class GraphAuditLog(Base):
     __tablename__ = 'graph_audit_logs'
@@ -146,7 +152,7 @@ class GraphAuditLog(Base):
     action = Column(String) # 'DELETE_NODE', 'DELETE_EDGE', 'MERGE_NODE'
     target_id = Column(String) 
     restoration_payload = Column(Text) # JSON blob con relaciones y atributos
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     reverted_at = Column(DateTime, nullable=True)
     
     __table_args__ = (
@@ -157,7 +163,7 @@ class EvolutionAudit(Base):
     __tablename__ = 'evolution_audit'
     id = Column(Integer, primary_key=True)
     filename = Column(String, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     score_internal = Column(Float)
     score_external = Column(Float)
     confidence_score = Column(Float, default=0.0)
@@ -180,19 +186,19 @@ class ModuleHealth(Base):
     success_count = Column(Integer, default=0)
     total_value_generated = Column(Float, default=0.0) # Métrica de valor acumulado
     cooldown_until = Column(DateTime, nullable=True)
-    last_update = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    last_update = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 class EvolutionInsight(Base):
     """Memoria Estratégica Indexada de NOVA."""
     __tablename__ = 'evolution_insight'
     id = Column(Integer, primary_key=True)
-    source_cycle = Column(DateTime, default=datetime.datetime.utcnow)
+    source_cycle = Column(DateTime, default=utc_now)
     category = Column(String) # error, performance, architecture
     strategy = Column(String)
     top_problematic = Column(String) # JSON string
     stabilization_index = Column(Float)
     learned_lesson = Column(String)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
 
 class SystemFailure(Base):
     __tablename__ = 'system_failures'
@@ -200,7 +206,7 @@ class SystemFailure(Base):
     type = Column(String, index=True)  # 'CORRUPTION', 'API_ERROR', 'INTERNAL_ERROR'
     description = Column(Text)
     severity = Column(String, default='warning') # 'warning', 'critical'
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     resolved = Column(Boolean, default=False, index=True)
     
     __table_args__ = (
@@ -213,7 +219,7 @@ class SystemSetting(Base):
     __tablename__ = 'system_settings'
     setting_key = Column(String(128), primary_key=True)
     value = Column(Text, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class SnippetCache(Base):
@@ -228,7 +234,7 @@ class SnippetCache(Base):
     description = Column(Text, nullable=True)  # Descripción corta del snippet
     keywords = Column(Text)  # JSON list de palabras clave para búsqueda
     vector_id = Column(String, nullable=True)  # ID en ChromaDB para búsqueda semántica
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     usage_count = Column(Integer, default=0)  # Número de veces reutilizado
     last_used = Column(DateTime, nullable=True)
     context = Column(Text, nullable=True)  # Contexto adicional (ej: "input validation")
@@ -241,8 +247,15 @@ class SnippetCache(Base):
         Index('ix_snippet_created', 'created_at'),
     )
 
-
-from sqlalchemy import event
+class ApprovalRequest(Base):
+    """v13.9.1 CRÍTICO FIX: Persistencia ACID para herramientas pendientes"""
+    __tablename__ = 'approval_requests'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True, index=True)
+    tool = Column(String)
+    data = Column(Text) # JSON payload
+    original_query = Column(String)
+    created_at = Column(DateTime, default=utc_now)
 
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
 
@@ -256,8 +269,21 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def perform_database_maintenance():
+    """
+    v14.0: Mantenimiento proactivo de SQLite.
+    Ejecuta optimización de índices y balanceo de páginas de almacenamiento.
+    """
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("PRAGMA optimize;")
+            conn.exec_driver_sql("PRAGMA wal_checkpoint(PASSIVE);")
+    except Exception as e:
+        print(f"[DB] Error en mantenimiento de base de datos: {e}")
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    perform_database_maintenance()
 
 def get_db():
     db = SessionLocal()
@@ -265,3 +291,4 @@ def get_db():
         yield db
     finally:
         db.close()
+

@@ -54,35 +54,35 @@ THINKER_USE_FAST_LANE = os.getenv("THINKER_USE_FAST_LANE", "true").lower() == "t
 RESEARCH_DOMAINS_FOCUS = ["STEM", "Software Architecture", "AI Ethics", "Cybersecurity"]
 
 # Model Configuration
-LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH", "models/qwen2.5:1.5b.gguf")
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen2.5:1.5b")
+LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH", "models/qwen2.5:3b.gguf")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen2.5:3b")
 # v11.8: Migración a Local Embeddings para evitar latencia de Ollama (28s -> 100ms)
 USE_LOCAL_EMBEDDINGS = os.getenv("USE_LOCAL_EMBEDDINGS", "true").lower() == "true"
 LLM_EMBED_MODEL = os.getenv("LLM_EMBED_MODEL", "all-MiniLM-L6-v2")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
-# v11.2: Endpoints especializados
-# v11.6.1: Consolidación a puerto único para estabilidad en CPU
-LLM_DEV_URL = os.getenv("LLM_DEV_URL", "http://localhost:11434/api/chat")
-LLM_AUDIT_URL = os.getenv("LLM_AUDIT_URL", "http://localhost:11434/api/chat")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11438/api/chat")
+# v11.2: Enjambre multi-motor — un puerto por rol (ollama_1/2/3 del Control Center)
+LLM_DEV_URL = os.getenv("LLM_DEV_URL", "http://localhost:11439/api/chat")
+LLM_AUDIT_URL = os.getenv("LLM_AUDIT_URL", "http://localhost:11440/api/chat")
+LLM_AUDIT_MODEL = os.getenv("LLM_AUDIT_MODEL", "phi3:mini")
+LLM_VISION_MODEL = os.getenv("LLM_VISION_MODEL", "llava-llama3:latest")
 
 OLLAMA_NUM_THREAD   = int(os.getenv("OLLAMA_NUM_THREAD",   "6")) # v11.9.0: Reducido a 6 para reservar 2 cores para backend Python + OS (Ryzen 7 5700G 8C/16T)
 
 # ── Parámetros de generación de Ollama ──────────────────────────────────────
-# FIX #3: Subido de 2048 a 4096 para que coincida con ContextManager.max_tokens=4000.
-# Con 2048, Ollama truncaba silenciosamente el contexto RAG en cada petición.
-# v11.1 CRÍTICO FIX: Reducido de 8192 a 4096 para resolver latencia extrema (221s → ~30s esperado).
-# Con 8192 tokens, Ollama en CPU requería >3 minutos por inferencia. 4096 es suficiente para RAG.
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX",     "4096"))
+# Ajuste: aumentar a 8192 por defecto para soportar RAG y largo historial cuando el hardware lo permita.
+# Si el sistema tiene restricciones de CPU/RAM, sobrescribe con la variable de entorno OLLAMA_NUM_CTX.
+OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX",     "8192"))
 OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "2048"))
 # PERFORMANCE OPTIMIZATION: Usando modelo ligero para mejor rendimiento
-# qwen2.5:1.5b ofrece 16x mejor rendimiento que qwen3:8b
-LLM_FAST_MODEL = os.getenv("LLM_FAST_MODEL", "qwen2.5:1.5b")
+# v13.9.5 FIX: Cambiar de qwen2.5:1.5b a qwen2.5:3b para mejorar seguimiento de instrucciones complejas
+# con RAG rico. 1.5B es demasiado pequeño para prompts largos con contexto RAG.
+LLM_FAST_MODEL = os.getenv("LLM_FAST_MODEL", "qwen2.5:3b")
 LLM_THINKER_MODEL = os.getenv("LLM_THINKER_MODEL", LLM_FAST_MODEL)
 LLM_CODER_MODEL = os.getenv("LLM_CODER_MODEL", "qwen2.5-coder:3b")  # v11.9.0: 3B para CPU-only (2.4x más rápido que 7B, ~2.5GB RAM)
 LLM_GATEWAY_REALTIME_MODEL = os.getenv("LLM_GATEWAY_REALTIME_MODEL", LLM_FAST_MODEL)
 LLM_GATEWAY_BATCH_MODEL = os.getenv("LLM_GATEWAY_BATCH_MODEL", LLM_MODEL_NAME)
 LLM_BATCH_ENABLED = os.getenv("LLM_BATCH_ENABLED", "false").lower() == "true"
-LLM_BATCH_BACKEND_URL = os.getenv("LLM_BATCH_BACKEND_URL", "http://localhost:11434/api/chat")
+LLM_BATCH_BACKEND_URL = os.getenv("LLM_BATCH_BACKEND_URL", "http://localhost:11438/api/chat")
 # v11.5: Concurrencia serializada para evitar saturación de CPU (Gridlock de núcleos)
 LLM_REALTIME_MAX_CONCURRENCY = int(os.getenv("LLM_REALTIME_MAX_CONCURRENCY", "1"))
 LLM_BATCH_MAX_CONCURRENCY = int(os.getenv("LLM_BATCH_MAX_CONCURRENCY", "1"))

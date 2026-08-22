@@ -7,6 +7,7 @@ from core.database import SessionLocal, KnowledgeEntry, EvolutionAudit, Research
 from sqlalchemy import func
 import sys
 import subprocess
+from core.safe_subprocess import check_output_safe
 
 def get_hardware_context() -> str:
     """Retorna un string con la configuración real de hardware en tiempo de ejecución."""
@@ -16,7 +17,7 @@ def get_hardware_context() -> str:
     gpu_info = "sin GPU masiva dedicada"
     try:
         if sys.platform == "win32":
-            output = subprocess.check_output(["wmic", "path", "win32_VideoController", "get", "name"], text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            output = check_output_safe(["wmic", "path", "win32_VideoController", "get", "name"], creationflags=subprocess.CREATE_NO_WINDOW)
             if "NVIDIA" in output.upper() or "RTX" in output.upper() or "GTX" in output.upper():
                 gpu_info = "con GPU dedicada NVIDIA"
             elif "RADEON RX" in output.upper():
@@ -24,7 +25,7 @@ def get_hardware_context() -> str:
             elif "RADEON" in output.upper() or "INTEL" in output.upper():
                 gpu_info = "con gráficos integrados (iGPU)"
         else:
-            output = subprocess.check_output(["nvidia-smi", "-L"], text=True)
+            output = check_output_safe(["nvidia-smi", "-L"])
             if "NVIDIA" in output:
                 gpu_info = "con GPU dedicada NVIDIA"
     except Exception:

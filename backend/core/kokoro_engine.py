@@ -42,6 +42,27 @@ class KokoroEngine:
             print(f"[Kokoro] Initialization failed: {e}")
             return False
 
+    def _detect_lang(self, voice_name: str) -> str:
+        """Auto-detects language code based on Kokoro voice name prefix."""
+        prefix = voice_name[:2].lower()
+        if prefix in ("af", "am"):
+            return "en-us"
+        elif prefix in ("bf", "bm"):
+            return "en-gb"
+        elif prefix in ("ef", "em"):
+            return "es"
+        elif prefix in ("ff"):
+            return "fr-fr"
+        elif prefix in ("if", "im"):
+            return "it"
+        elif prefix in ("jf", "jm"):
+            return "ja"
+        elif prefix in ("pf", "pm"):
+            return "pt-br"
+        elif prefix in ("zf", "zm"):
+            return "zh"
+        return "es"  # default to Spanish for NOVA
+
     def synthesize(self, text, voice_name="af_sarah", output_path="output.wav"):
         if not self._initialized:
             if not self.initialize():
@@ -50,11 +71,12 @@ class KokoroEngine:
         try:
             print(f"[Kokoro] Synthesizing text: {text[:50]}...")
             start_time = time.time()
+            lang_code = self._detect_lang(voice_name)
             samples, sample_rate = self.kokoro.create(
                 text, 
                 voice=voice_name, 
                 speed=1.0, 
-                lang="es" # Spanish language code for espeak
+                lang=lang_code
             )
             print(f"[Kokoro] Synthesis completed in {time.time() - start_time:.2f}s")
             
@@ -64,10 +86,10 @@ class KokoroEngine:
             print(f"[Kokoro] Synthesis failed: {e}")
             return None
 
-    def synthesize_bytes(self, text, voice_name="ef_dora"):
+    def synthesize_bytes(self, text, voice_name="af_sarah"):
         """
         Genera audio WAV en memoria y devuelve los bytes.
-        Seleccionamos 'ef_dora' (Dora) para NOVA por defecto en español.
+        Seleccionamos 'af_sarah' para NOVA por defecto.
         """
         if not self._initialized:
             if not self.initialize():
@@ -76,8 +98,9 @@ class KokoroEngine:
             import io
             print(f"[Kokoro] Synthesizing to bytes: {text[:50]}...")
             start_time = time.time()
+            lang_code = self._detect_lang(voice_name)
             samples, sample_rate = self.kokoro.create(
-                text, voice=voice_name, speed=1.0, lang="es"
+                text, voice=voice_name, speed=1.0, lang=lang_code
             )
             buffer = io.BytesIO()
             sf.write(buffer, samples, sample_rate, format='WAV')
@@ -90,4 +113,5 @@ class KokoroEngine:
             return None
 
 kokoro_engine = KokoroEngine()
+
 

@@ -25,9 +25,10 @@ import asyncio
 import hashlib
 import concurrent.futures
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, AsyncGenerator, Dict, Any
 
 from core.kokoro_engine import kokoro_engine
+
 from core.logging_config import get_logger
 
 logger = get_logger("core.tts")
@@ -42,7 +43,7 @@ VOICE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Voz por defecto de NOVA ───────────────────────────────────────
-DEFAULT_VOICE   = os.getenv("NOVA_VOICE", "es_AR-daniela-high")
+DEFAULT_VOICE   = os.getenv("NOVA_VOICE", "ef_dora")
 DEFAULT_SPEAKER = 0
 DEFAULT_SPEED   = float(os.getenv("NOVA_VOICE_SPEED", "1.0"))
 
@@ -52,6 +53,16 @@ EDGE_VOICES = [
     "es-ES-ElviraNeural", # Mujer (España)
     "es-MX-JorgeNeural",  # Hombre (México)
     "es-ES-AlvaroNeural", # Hombre (España)
+]
+
+# ── Voces Curadas Kokoro (Local Neuronal) ─────────────────────────
+KOKORO_VOICES = [
+    "ef_dora",    # Femenina (Española) - Excelente
+    "em_alex",    # Masculina (Española) - Excelente
+    "af_sarah",   # Femenina (Inglés)
+    "af_bella",   # Femenina (Inglés)
+    "am_adam",    # Masculina (Inglés)
+    "em_santa",   # Masculina (Española - Navideña/Festiva)
 ]
 
 # ── Process Pool for Kokoro (Ryzen 7 Optimization) ───────────────
@@ -130,21 +141,28 @@ class NOVAVoiceEngine:
 
         self._loading = True
         
-        # 1. Intentar inicializar Kokoro primero (es el salto cualitativo)
         try:
-            if kokoro_engine.initialize():
-                self.engine = "kokoro"
+            voice = voice_name or self._model_name
+            
+            # 1. Si es voz de Kokoro, inicializar Kokoro
+            kokoro_prefixes = ("af_", "am_", "bf_", "bm_", "ef_", "em_", "ff_", "if_", "im_", "jf_", "jm_", "pf_", "pm_", "zf_", "zm_")
+            if voice.startswith(kokoro_prefixes):
+                if kokoro_engine.initialize():
+                    self.engine = "kokoro"
+                    self._model_name = voice
+                    self._ready = True
+                    print(f"[OK] [TTS] Voz neuronal Kokoro '{voice}' activada")
+                    return True
+
+            # 2. Si es una voz Neural de Edge-TTS
+            if voice.endswith("Neural"):
+                self.engine = "edge-tts"
+                self._model_name = voice
                 self._ready = True
-                print("[OK] [TTS] Voz neuronal Kokoro activada")
+                print(f"[TTS] Voz Edge-TTS '{voice}' lista")
                 return True
-        except Exception as e:
-            print(f"[TTS] Error intentando Kokoro: {e}")
 
-        # 2. Fallback a Piper (anterior)
-        voice = voice_name or self._model_name
-
-
-        try:
+            # 3. Fallback a Piper (anterior)
             print(f"[TTS] Cargando voz de NOVA: {voice}...")
             # Importar piper
             from piper.voice import PiperVoice  # type: ignore
@@ -173,7 +191,6 @@ class NOVAVoiceEngine:
                 self.engine = "legacy"
                 self._ready = True
                 return False
-
 
         except ImportError:
             print("[TTS] Piper no instalado. Ejecuta: pip install piper-tts")
@@ -229,6 +246,59 @@ class NOVAVoiceEngine:
     #  SÍNTESIS DE VOZ
     # ══════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _segment_text_for_streaming(text: str) -> List[str]:
+        """
+        Segmenta texto en cláusulas y oraciones fonéticamente naturales para baja latencia.
+        Prioriza divisiones por '.', '!', '?', '\n', ';', ':', ',' para emitir el primer
+        bloque de audio en <300ms.
+        """
+        if not text:
+            return []
+        
+        import re
+        cleaned = re.sub(r'\s+', ' ', text.strip())
+        raw_parts = re.split(r'([\.\!\?\n]+|[\,\;\:]\s+)', cleaned)
+        
+        segments = []
+        current = ""
+        
+        for part in raw_parts:
+            if not part:
+                continue
+            current += part
+            if any(current.rstrip().endswith(p) for p in ['.', '!', '?', ';', ':']) or (',' in current and len(current) >= 40):
+                if len(current.strip()) >= 5:
+                    segments.append(current.strip())
+                current = ""
+            elif len(current) >= 120:
+                segments.append(current.strip())
+                current = ""
+                
+        if current.strip():
+            segments.append(current.strip())
+            
+        return segments if segments else [cleaned]
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        speed: Optional[float] = None,
+        speaker: int = DEFAULT_SPEAKER
+    ):
+        """
+        Generador asíncrono que sintetiza y emite fragmentos de audio en streaming.
+        Permite reproducción instantánea en el frontend sin esperar la respuesta completa.
+        """
+        if not text or not text.strip():
+            return
+            
+        segments = self._segment_text_for_streaming(text)
+        for segment in segments:
+            audio_chunk = await self.synthesize(segment, speed=speed, speaker=speaker)
+            if audio_chunk:
+                yield audio_chunk
+
     async def synthesize(
         self,
         text:     str,
@@ -239,6 +309,7 @@ class NOVAVoiceEngine:
         Convierte texto a audio WAV.
         Si el texto es largo, lo divide en fragmentos para mantener la calidad.
         """
+
         if not text or not text.strip():
             return None
 
@@ -266,7 +337,7 @@ class NOVAVoiceEngine:
                 loop = asyncio.get_running_loop()
                 pool = _get_kokoro_pool()
                 audio_bytes = await loop.run_in_executor(
-                    pool, _kokoro_synthesis_worker, clean_text, "ef_dora"
+                    pool, _kokoro_synthesis_worker, clean_text, self._model_name
                 )
                 if audio_bytes and self._use_cache:
                     cache_file.write_bytes(audio_bytes)
@@ -417,7 +488,15 @@ class NOVAVoiceEngine:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                print(f"[TTS] espeak-ng timeout")
+                return None
+            except Exception as e:
+                print(f"[TTS] espeak-ng error: {e}")
+                return None
 
             if os.path.exists(tmp_path):
                 audio = Path(tmp_path).read_bytes()
@@ -528,9 +607,10 @@ class NOVAVoiceEngine:
 
         return {
             "ready":            self._ready,
-            "current_voice":    "ef_dora" if self.engine == "kokoro" else self._model_name,
+            "current_voice":    self._model_name,
             "engine":           self.engine or "unknown",
 
+            "kokoro_voices":    KOKORO_VOICES,
             "piper_voices":     list(set(piper_voices)),
             "edge_voices":      EDGE_VOICES,
             "cache_entries":    len(list(CACHE_DIR.glob("*.wav"))) + len(list(CACHE_DIR.glob("*.mp3"))),
@@ -553,21 +633,27 @@ class NOVAVoiceEngine:
     def set_voice(self, voice_name: str):
         """
         Cambiar la voz de NOVA.
-        v12.1.5: Blindaje para Kokoro. Si Kokoro está activo, ignoramos cambios automáticos
-        a menos que sean explícitos o hacia modelos Neural de alta calidad.
+        Detecta automáticamente el motor (Kokoro, Edge-TTS, Piper) según el nombre.
         """
         if self._model_name == voice_name:
-            return # Evitar reinicialización si es la misma voz
+            return  # Evitar reinicialización si es la misma voz
 
-        # Si Kokoro está activo, protegemos la sesión
-        if self.engine == "kokoro" and not voice_name.endswith("Neural"):
-            logger.info(f"[TTS] Cambio de voz a '{voice_name}' ignorado para preservar motor Kokoro.")
-            return
-
+        old_engine = self.engine
         self._model_name = voice_name
-        self._voice      = None
-        self._ready      = False
-        print(f"[TTS] Voz cambiada a: {voice_name} - se cargará en la próxima síntesis")
+        self._voice = None
+        self._ready = False
+        self._loading = False  # Asegurar que no quede bloqueado
+
+        # Pre-detectar el motor para que initialize() lo recoja
+        kokoro_prefixes = ("af_", "am_", "bf_", "bm_", "ef_", "em_", "ff_", "if_", "im_", "jf_", "jm_", "pf_", "pm_", "zf_", "zm_")
+        if voice_name.startswith(kokoro_prefixes):
+            self.engine = None  # Se asignará en initialize()
+        elif voice_name.endswith("Neural"):
+            self.engine = None
+        else:
+            self.engine = None
+
+        print(f"[TTS] Voz cambiada a: {voice_name} (motor anterior: {old_engine}) - se cargará en la próxima síntesis")
 
     def clear_cache(self):
         """Limpiar caché de audio."""
@@ -577,6 +663,18 @@ class NOVAVoiceEngine:
             f.unlink()
         print("[TTS] Caché de audio limpiado")
 
+    def shutdown(self):
+        """Detener y liberar el pool de procesos de síntesis Kokoro."""
+        global _kokoro_pool
+        if _kokoro_pool is not None:
+            try:
+                _kokoro_pool.shutdown(wait=False, cancel_futures=True)
+                print("[TTS] Pool de procesos Kokoro liberado.")
+            except Exception as e:
+                print(f"[TTS] Error liberando pool Kokoro: {e}")
+            finally:
+                _kokoro_pool = None
+
 
 # Instancia global — la voz de NOVA
-nova_voice = NOVAVoiceEngine()
+nova_voice = NOVAVoiceEngine()

@@ -18,10 +18,12 @@ async def load_test():
     for t in topics:
         await task_queue.add_task("explore_topic", {"topic": t})
         
-    print(f"Queue size after injection: {task_queue.queue.qsize()}")
+    print(f"Queue size after injection: {task_queue.get_size()}")
     
-    # Wait for completion
-    await task_queue.join()
+    # Wait for completion (since workers run infinitely, wait for size to drop to 0 with timeout)
+    start_wait = time.time()
+    while task_queue.get_size() > 0 and time.time() - start_wait < 60:
+        await asyncio.sleep(1)
     
     end_time = time.time()
     print(f"--- Load Test Complete in {end_time - start_time:.2f}s ---")

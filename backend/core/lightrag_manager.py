@@ -2,7 +2,7 @@ import os
 import asyncio
 from lightrag import LightRAG, QueryParam
 from lightrag.utils import EmbeddingFunc
-from core.config import LIGHTRAG_DB_PATH, LLM_FAST_MODEL, LIGHTRAG_ENABLED
+from core.config import LIGHTRAG_DB_PATH, LLM_FAST_MODEL, LLM_CODER_MODEL, LIGHTRAG_ENABLED
 from core.logging_config import get_logger
 from core.llm_gateway import llm_gateway
 from core.llm_client import llm_client
@@ -29,16 +29,30 @@ class LightRAGManager:
                     messages.extend(history_messages)
                 messages.append({"role": "user", "content": prompt})
 
-                # Enrutamos a través del gateway en carril 'batch' (prioridad baja)
-                # para no bloquear el chat interactivo del usuario.
-                return await llm_gateway.chat(
-                    messages, 
-                    lane="batch", 
-                    model=LLM_FAST_MODEL, 
-                    priority=2,
-                    temperature=kwargs.get("temperature", 0.0),
-                    ignore_overdrive=True # Evita abortar la extracción si el usuario está activo
-                )
+                # Enrutamos a través del gateway en carril 'batch' y motor Dev
+                # para aislar la extracción del chat interactivo.
+                last_exception = None
+                for attempt in range(3):
+                    try:
+                        result = await llm_gateway.chat(
+                            messages,
+                            lane="batch",
+                            model=LLM_CODER_MODEL,
+                            agent_name="developer",
+                            priority=3,
+                            temperature=kwargs.get("temperature", 0.1),
+                            ignore_overdrive=True
+                        )
+                        if result and result.strip():
+                            return result
+                    except Exception as e:
+                        last_exception = e
+                        await asyncio.sleep(1 + attempt)
+                        continue
+
+                if last_exception:
+                    raise last_exception
+                return ""
 
             # v12.0.1: Adaptador para Embeddings Locales (all-MiniLM-L6-v2)
             # Evita peticiones HTTP a Ollama y es ~100x más rápido.
@@ -49,9 +63,10 @@ class LightRAGManager:
             self.rag = LightRAG(
                 working_dir=LIGHTRAG_DB_PATH,
                 llm_model_func=llm_model_func,
-                llm_model_name=LLM_FAST_MODEL,
+                llm_model_name=LLM_CODER_MODEL,
                 llm_model_max_async=1, # Serializado para no saturar el Ryzen 7
-                llm_model_max_token_size=4096,
+                chunk_token_size=192,  # Más pequeño para mantener chunks < 2000 caracteres
+                chunk_overlap_token_size=48,
                 embedding_func=EmbeddingFunc(
                     embedding_dim=384, # all-MiniLM-L6-v2 es 384
                     max_token_size=8192,
@@ -75,7 +90,7 @@ class LightRAGManager:
         except Exception as e:
             logger.error(f"LightRAG insertion error: {e}")
 
-    async def query(self, query: str, mode: str = "local") -> str:
+    async def query(self, query: str, mode: str = "naive") -> str:
         if not self.rag: return ""
         try:
             # modes: "global", "local", "hybrid", "naive"

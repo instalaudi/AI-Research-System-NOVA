@@ -1,34 +1,51 @@
+# Core Web Framework
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
-requests
-beautifulsoup4
+python-dotenv
+slowapi
+python-multipart
+
+# Database & Storage
+sqlalchemy
 chromadb
 sentence-transformers
-python-dotenv
-asyncio
-pytest
-httpx
-sqlalchemy
-lxml
-feedparser
-googlesearch-python
-slowapi
-openai-whisper
-ffmpeg-python
-python-multipart
+lightrag-hku
 redis
 fakeredis
+
+# Networking & HTTP
+httpx
+requests
+feedparser
+beautifulsoup4
+lxml
+googlesearch-python
+
+# Security & Authentication
 passlib[bcrypt]
+bcrypt
 PyJWT
+
+# AI, Audio & Vision
+openai-whisper
+ffmpeg-python
+opencv-python
+pillow
+
+# Documents & Parsing
 pymupdf
 EbookLib
 html2text
-browser-use
-playwright
-lightrag-hku
 python-pptx
 python-docx
+
+# Automation & Browser
+browser-use
+playwright
 pyautogui
-opencv-python
-pillow
+
+# Testing
+pytest
+pytest-asyncio
+

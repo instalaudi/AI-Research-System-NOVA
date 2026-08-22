@@ -29,9 +29,19 @@ interface TtsStatus {
     ready: boolean;
     current_voice: string;
     engine: string;
+    kokoro_voices: string[];
     piper_voices: string[];
     edge_voices: string[];
 }
+
+const KOKORO_LABELS: Record<string, string> = {
+    ef_dora: "🇪🇸 Dora (Femenina ES)",
+    em_alex: "🇪🇸 Alex (Masculina ES)",
+    em_santa: "🇪🇸 Santa (Masculina ES)",
+    af_sarah: "🇺🇸 Sarah (Femenina EN)",
+    af_bella: "🇺🇸 Bella (Femenina EN)",
+    am_adam: "🇺🇸 Adam (Masculina EN)",
+};
 
 export default function ControlPanel() {
     const [features, setFeatures] = useState<Record<FeatureKey, boolean> | null>(null);
@@ -227,6 +237,11 @@ export default function ControlPanel() {
                                     aria-label="Motor de Síntesis de Voz"
                                     title="Seleccionar Motor de Voz"
                                 >
+                                    <optgroup label="🧠 Local Neuronal (Kokoro-82M)">
+                                        {ttsStatus.kokoro_voices?.map(v => (
+                                            <option key={v} value={v}>{KOKORO_LABELS[v] || v}</option>
+                                        ))}
+                                    </optgroup>
                                     <optgroup label="🌐 Premium Nube (Edge-TTS)">
                                         {ttsStatus.edge_voices?.map(v => (
                                             <option key={v} value={v}>{v}</option>
@@ -239,7 +254,9 @@ export default function ControlPanel() {
                                     </optgroup>
                                 </select>
                                 
-                                {ttsStatus.engine === "edge-tts" ? (
+                                {ttsStatus.engine === "kokoro" ? (
+                                    <span className="px-2 py-1 bg-cyan-500/20 text-cyan-300 text-xs rounded-md border border-cyan-500/30">🧠 Neuronal / Local</span>
+                                ) : ttsStatus.engine === "edge-tts" ? (
                                     <span className="px-2 py-1 bg-purple-500/20 text-purple-300 text-xs rounded-md border border-purple-500/30">Nube / Online</span>
                                 ) : (
                                     <span className="px-2 py-1 bg-green-500/20 text-green-300 text-xs rounded-md border border-green-500/30">Local / Privado</span>

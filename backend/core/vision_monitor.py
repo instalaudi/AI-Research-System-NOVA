@@ -32,11 +32,13 @@ from core.config import DATA_DIR
 logger = logging.getLogger("nova.vision_monitor")
 
 # ── Configuración ──────────────────────────────────────────────
-VISION_ENABLED    = os.getenv("NOVA_VISION_ENABLED", "false").lower() == "true"
-VISION_INTERVAL   = int(os.getenv("NOVA_VISION_INTERVAL", "15"))       # segundos entre capturas
-ANALYSIS_INTERVAL = int(os.getenv("NOVA_VISION_ANALYSIS", "120"))      # segundos entre análisis LLM
-FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-CAMERA_INDEX      = int(os.getenv("NOVA_CAMERA_INDEX", "0"))
+VISION_ENABLED      = os.getenv("NOVA_VISION_ENABLED", "false").lower() == "true"
+VISION_INTERVAL     = int(os.getenv("NOVA_VISION_INTERVAL", "15"))       # segundos entre capturas
+ANALYSIS_INTERVAL   = int(os.getenv("NOVA_VISION_ANALYSIS", "120"))      # segundos entre análisis LLM
+FACE_CASCADE_PATH   = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+CAMERA_INDEX        = int(os.getenv("NOVA_CAMERA_INDEX", "0"))
+STORE_FACES         = os.getenv("NOVA_VISION_STORE_FACES", "true").lower() == "true"
+MAX_KNOWN_FACES     = int(os.getenv("NOVA_VISION_MAX_KNOWN_FACES", "500"))
 
 
 class VisionMonitor:
@@ -78,6 +80,10 @@ class VisionMonitor:
         self._last_face_notify_time = 0   # Para no spamear Telegram con caras nuevas
         self._last_memory_save_time = 0   # Para guardar memoria a largo plazo sin spamear LightRAG
         
+        # W5: Declaración formal de atributos no inicializados
+        self._last_clothes_comment = 0.0
+        self._last_emotion_notify_time = 0.0
+        self._current_camera_index = CAMERA_INDEX
         
         # Cargar base de datos de caras conocidas
         self._state_file = self._data_dir / "vision_state.json"
@@ -93,6 +99,11 @@ class VisionMonitor:
         """Inicia el ciclo de monitoreo visual en background."""
         if not self.enabled:
             logger.info("[VisionMonitor] Desactivado. Establecer NOVA_VISION_ENABLED=true para activar.")
+            return
+        
+        # W8: Prevenir doble loop de monitoreo compitiendo por la cámara
+        if self._running:
+            logger.warning("[VisionMonitor] El monitor ya está corriendo. Ignorando segunda llamada.")
             return
         
         self._running = True
@@ -146,10 +157,10 @@ class VisionMonitor:
             face_crop = frame[y:y+h, x:x+w]
             face_hash = self._hash_face(face_crop)
             
-            # Buscar coincidencia usando Distancia de Hamming (tolerancia de 12 bits)
+            # Buscar coincidencia usando Distancia de Hamming (tolerancia aumentada a 18 bits para evitar falsas alarmas)
             matched_hash = None
             for known_hash in self._known_faces.keys():
-                if self._compute_hamming_distance(face_hash, known_hash) <= 12:
+                if self._compute_hamming_distance(face_hash, known_hash) <= 18:
                     matched_hash = known_hash
                     break
             
@@ -163,9 +174,10 @@ class VisionMonitor:
                     "last_seen": datetime.datetime.now().isoformat(),
                     "count": 1
                 }
-                # Guardar la cara para referencia futura
-                face_path = self._faces_dir / f"face_{face_hash}.jpg"
-                cv2.imwrite(str(face_path), face_crop)
+                # PRIV1: Cumplimiento de privacidad - guardar rostro solo si está activada la opción
+                if STORE_FACES:
+                    face_path = self._faces_dir / f"face_{face_hash}.jpg"
+                    cv2.imwrite(str(face_path), face_crop)
                 logger.info(f"[VisionMonitor] 🆕 Cara nueva detectada! Hash: {face_hash}")
             else:
                 self._known_faces[matched_hash]["last_seen"] = datetime.datetime.now().isoformat()
@@ -173,31 +185,64 @@ class VisionMonitor:
         
         # 5. Validación Semántica con LLM (Evitar Falsos Positivos por Lentes/Ropa)
         now_ts = time.time()
-        if new_faces and (now_ts - self._last_face_notify_time > 120):
-            logger.info("[VisionMonitor] Posible cara nueva por pHash. Verificando con LLM...")
-            analysis = await self._deep_analysis(frame, check_identity=True)
+        if new_faces:
+            # Antes de agregar permanentemente a _known_faces, verificar si ya tenemos demasiados hashes
+            # de la misma escena sin movimiento humano real
+            if len(self._known_faces) > 100:
+                logger.info("[VisionMonitor] Exceso de hashes de caras detectadas (>100). Verificando escena vacía con LLM...")
+                analysis = await self._deep_analysis(frame, check_identity=True)
+                if not analysis or (not analysis.get("juan_ramon_detectado") 
+                                    and analysis.get("personas_desconocidas", 0) == 0):
+                    logger.warning("[VisionMonitor] El análisis del LLM confirma escena vacía. Descartando falsas caras de Haar Cascade.")
+                    for h in new_face_hashes:
+                        self._known_faces.pop(h, None)
+                        face_img = self._faces_dir / f"face_{h}.jpg"
+                        if face_img.exists():
+                            try:
+                                face_img.unlink()
+                            except Exception:
+                                pass
+                    return  # No spamear LightRAG ni Telegram
             
-            if analysis:
-                if analysis.get("personas_desconocidas", 0) > 0:
-                    # Sí, hay un extraño
-                    if analysis.get("pregunta_desconocidos"):
-                        await self._notify_curiosity(analysis["pregunta_desconocidos"])
-                    else:
-                        await self._notify_new_faces(frame, new_faces, len(faces))
-                    self._last_face_notify_time = now_ts
-                elif analysis.get("juan_ramon_detectado", False):
-                    # Falsa alarma, es Juan Ramón con lentes o ropa nueva
-                    logger.info("[VisionMonitor] El LLM confirmó que es Juan Ramón. Falsa alarma del pHash.")
-                    # Asignar el nombre automáticamente al nuevo hash para que aprenda esta variante
-                    for face_hash in new_face_hashes:
-                        self._known_faces[face_hash]["name"] = "Juan Ramón"
-                    
-                    # Si tiene un comentario sobre su ropa, decirlo ocasionalmente
-                    comentario = analysis.get("comentario_ropa")
-                    if comentario and (now_ts - getattr(self, '_last_clothes_comment', 0) > 3600):
-                        await self._notify_observation(f"👕 **Detalle Visual:**\n\n{comentario}")
-                        self._last_clothes_comment = now_ts
+            # Flujo normal con cooldown de 120s para notificaciones
+            if now_ts - self._last_face_notify_time > 120:
+                logger.info("[VisionMonitor] Posible cara nueva por pHash. Verificando con LLM...")
+                if 'analysis' not in locals():
+                    analysis = await self._deep_analysis(frame, check_identity=True)
+                
+                if analysis:
+                    if analysis.get("personas_desconocidas", 0) > 0:
+                        # Sí, hay un extraño
+                        if analysis.get("pregunta_desconocidos"):
+                            await self._notify_curiosity(analysis["pregunta_desconocidos"], frame)
+                        else:
+                            await self._notify_new_faces(frame, new_faces, len(faces))
                         self._last_face_notify_time = now_ts
+                    elif analysis.get("juan_ramon_detectado", False):
+                        # Falsa alarma, es Juan Ramón con lentes o ropa nueva
+                        logger.info("[VisionMonitor] El LLM confirmó que es Juan Ramón. Falsa alarma del pHash.")
+                        # Asignar el nombre automáticamente al nuevo hash para que aprenda esta variante
+                        for face_hash in new_face_hashes:
+                            self._known_faces[face_hash]["name"] = "Juan Ramón"
+                        
+                        # Si tiene un comentario sobre su ropa, decirlo ocasionalmente
+                        comentario = analysis.get("comentario_ropa")
+                        if comentario and (now_ts - self._last_clothes_comment > 3600):
+                            await self._notify_observation(f"👕 **Detalle Visual:**\n\n{comentario}")
+                            self._last_clothes_comment = now_ts
+                            self._last_face_notify_time = now_ts
+                    else:
+                        # W6: El LLM no detectó a nadie (falso positivo de Haar Cascade en sombras/objetos)
+                        # Limpiamos el hash temporal para evitar que la base de datos se llene de basura
+                        logger.info("[VisionMonitor] El LLM determinó que no hay personas. Eliminando falso positivo de Haar Cascade...")
+                        for face_hash in new_face_hashes:
+                            self._known_faces.pop(face_hash, None)
+                            face_img = self._faces_dir / f"face_{face_hash}.jpg"
+                            if face_img.exists():
+                                try:
+                                    face_img.unlink()
+                                except Exception:
+                                    pass
 
         # 6. Actualizar contador de personas para referencia interna (sin emitir alertas ruidosas)
         self._last_face_count = len(faces)
@@ -217,17 +262,23 @@ class VisionMonitor:
 
     def _capture_frame(self) -> Optional[np.ndarray]:
         """Captura un frame de la webcam. Auto-detecta si la cámara cambia o se desconecta."""
+        import platform
+        _CV_BACKEND = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_V4L2
+        cap = None
         try:
             # 1. Intentar usar el índice de cámara actual
-            camera_idx = getattr(self, '_current_camera_index', CAMERA_INDEX)
-            cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
+            camera_idx = self._current_camera_index
+            if camera_idx >= 0:
+                cap = cv2.VideoCapture(camera_idx, _CV_BACKEND)
             
             # 2. Si no abre, buscar automáticamente otra cámara conectada (índices 0 al 3)
-            if not cap.isOpened():
+            if cap is None or not cap.isOpened():
+                if cap is not None:
+                    cap.release()
+                    cap = None
                 logger.warning(f"[VisionMonitor] Cámara {camera_idx} no disponible. Buscando alternativas...")
-                cap = None
                 for i in range(4):
-                    temp_cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                    temp_cap = cv2.VideoCapture(i, _CV_BACKEND)
                     if temp_cap.isOpened():
                         ret, _ = temp_cap.read()
                         if ret: # Asegurar que da video real
@@ -237,8 +288,12 @@ class VisionMonitor:
                             break
                         else:
                             temp_cap.release()
+                    else:
+                        temp_cap.release()
             
             if cap is None or not cap.isOpened():
+                if cap is not None:
+                    cap.release()
                 return None
             
             # Configuración de baja resolución para análisis rápido
@@ -250,7 +305,6 @@ class VisionMonitor:
                 cap.read()
             
             ret, frame = cap.read()
-            cap.release()
             
             if not ret or frame is None:
                 # Si falló al leer, resetear el índice para que vuelva a buscar la próxima vez
@@ -261,6 +315,13 @@ class VisionMonitor:
         except Exception as e:
             logger.error(f"[VisionMonitor] Error en captura: {e}")
             return None
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+
 
     def _detect_faces(self, frame: np.ndarray) -> list:
         """Detecta caras usando Haar Cascade (muy ligero para CPU)."""
@@ -382,6 +443,14 @@ Contexto: Juan Ramón a veces usa lentes y cambia de ropa. Reconócelo por sus f
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     capture_path = self._captures_dir / f"analysis_{timestamp}.jpg"
                     cv2.imwrite(str(capture_path), frame)
+                    
+                    # C6: Rotación de fotos analíticas (evita saturación de disco)
+                    try:
+                        captures = sorted(self._captures_dir.glob("analysis_*.jpg"))
+                        for old in captures[:-100]:
+                            old.unlink()
+                    except Exception as rotate_err:
+                        logger.error(f"[VisionMonitor] Error rotando capturas analíticas: {rotate_err}")
                 
                 logger.info(
                     f"[VisionMonitor] Análisis: JR={analysis.get('juan_ramon_detectado')} | "
@@ -394,10 +463,10 @@ Contexto: Juan Ramón a veces usa lentes y cambia de ropa. Reconócelo por sus f
                     # Lógica de notificaciones periódicas (fuera de la validación de identidad)
                     now_ts = time.time()
                     if analysis.get("alerta"):
-                        await self._notify_alert(analysis["alerta"])
+                        await self._notify_alert(analysis["alerta"], frame)
                     elif analysis.get("pregunta_emocional"):
                         # Cooldown de 2 horas para no ser sofocante con las emociones
-                        if now_ts - getattr(self, '_last_emotion_notify_time', 0) > 7200:
+                        if now_ts - self._last_emotion_notify_time > 7200:
                             await self._notify_observation(f"💙 **Empatía Visual:**\n\n{analysis['pregunta_emocional']}")
                             self._last_emotion_notify_time = now_ts
                 
@@ -449,25 +518,27 @@ Contexto: Juan Ramón a veces usa lentes y cambia de ropa. Reconócelo por sus f
         except Exception as e:
             logger.error(f"[VisionMonitor] Error notificando caras: {e}")
 
-    async def _notify_curiosity(self, question: str, b64_image: str = None):
-        """NOVA hace una pregunta sobre algo que vio."""
+    async def _notify_curiosity(self, question: str, frame: np.ndarray = None):
+        """NOVA hace una pregunta sobre algo que vio. Envía foto a Telegram si está disponible (W7)."""
         try:
-            from core.proactive import nova_proactive
-            
             msg = f"👁️ **Curiosidad Visual**\n\n{question}"
-            await nova_proactive.notify(msg, initiative="vision_curiosity")
-            
+            if frame is not None:
+                await self._send_photo_telegram(frame, msg)
+            else:
+                from core.proactive import nova_proactive
+                await nova_proactive.notify(msg, initiative="vision_curiosity")
         except Exception as e:
             logger.error(f"[VisionMonitor] Error en curiosidad: {e}")
 
-    async def _notify_alert(self, alert: str, b64_image: str = None):
-        """NOVA reporta algo inusual."""
+    async def _notify_alert(self, alert: str, frame: np.ndarray = None):
+        """NOVA reporta algo inusual. Envía foto a Telegram si está disponible (W7)."""
         try:
-            from core.proactive import nova_proactive
-            
             msg = f"⚠️ **Alerta Visual**\n\n{alert}"
-            await nova_proactive.notify(msg, initiative="vision_alert")
-            
+            if frame is not None:
+                await self._send_photo_telegram(frame, msg)
+            else:
+                from core.proactive import nova_proactive
+                await nova_proactive.notify(msg, initiative="vision_alert")
         except Exception as e:
             logger.error(f"[VisionMonitor] Error en alerta: {e}")
 
@@ -552,9 +623,50 @@ Contexto: Juan Ramón a veces usa lentes y cambia de ropa. Reconócelo por sus f
         except Exception as e:
             logger.error(f"[VisionMonitor] Error cargando estado: {e}")
 
+    def _prune_old_faces(self):
+        """C5: Elimina caras no nombradas vistas por última vez hace >30 días o si exceden el límite de tamaño."""
+        try:
+            # 1. Eliminar por fecha (más de 30 días)
+            cutoff = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+            to_delete = [
+                h for h, data in self._known_faces.items()
+                if not data.get("name") and data.get("last_seen", "") < cutoff
+            ]
+            for h in to_delete:
+                self._known_faces.pop(h, None)
+                face_img = self._faces_dir / f"face_{h}.jpg"
+                if face_img.exists():
+                    try:
+                        face_img.unlink()
+                    except Exception:
+                        pass
+            
+            # 2. Eliminar por límite estricto de capacidad (MAX_KNOWN_FACES)
+            if len(self._known_faces) > MAX_KNOWN_FACES:
+                # Ordenamos las caras sin nombre por fecha de último avistamiento
+                unnamed_faces = sorted(
+                    [(h, data.get("last_seen", "")) for h, data in self._known_faces.items() if not data.get("name")],
+                    key=lambda x: x[1]
+                )
+                excess = len(self._known_faces) - MAX_KNOWN_FACES
+                if excess > 0:
+                    for h, _ in unnamed_faces[:excess]:
+                        self._known_faces.pop(h, None)
+                        face_img = self._faces_dir / f"face_{h}.jpg"
+                        if face_img.exists():
+                            try:
+                                face_img.unlink()
+                            except Exception:
+                                pass
+        except Exception as prune_err:
+            logger.error(f"[VisionMonitor] Error realizando poda de caras conocidas: {prune_err}")
+
     def _save_state(self):
         """Guarda el estado del monitor a disco."""
         try:
+            # Realizar poda antes de persistir
+            self._prune_old_faces()
+            
             state = {
                 "known_faces": self._known_faces,
                 "last_face_count": self._last_face_count,
@@ -566,10 +678,18 @@ Contexto: Juan Ramón a veces usa lentes y cambia de ropa. Reconócelo por sus f
             logger.error(f"[VisionMonitor] Error guardando estado: {e}")
 
 
-# ── Singleton ──────────────────────────────────────────────
-vision_monitor = VisionMonitor()
+# ── Singleton (Lazy Loaded) ───────────────────────────────
+_vision_monitor_instance = None
+
+
+def get_vision_monitor() -> VisionMonitor:
+    """Obtiene la instancia única de VisionMonitor (creándola solo si es necesario)."""
+    global _vision_monitor_instance
+    if _vision_monitor_instance is None:
+        _vision_monitor_instance = VisionMonitor()
+    return _vision_monitor_instance
 
 
 async def run_vision_monitor():
     """Entry point para iniciar desde main.py."""
-    await vision_monitor.start()
+    await get_vision_monitor().start()

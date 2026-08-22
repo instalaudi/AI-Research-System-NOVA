@@ -1,4 +1,4 @@
-from pydantic import BaseModel, constr, field_validator, root_validator
+from pydantic import BaseModel, constr, field_validator, model_validator
 from typing import List, Optional
 import re
 
@@ -15,8 +15,11 @@ class QueryRequest(BaseModel):
     files: Optional[List[FileContent]] = None
     mode: Optional[str] = "auto" # auto, chat, research, build, knowledge
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def fill_query_for_attachments(cls, values):
+        if not isinstance(values, dict):
+            return values
         query = values.get("query")
         images = values.get("images")
         files = values.get("files")
@@ -26,6 +29,7 @@ class QueryRequest(BaseModel):
         if images or files:
             values["query"] = "Analiza este contenido adjunto"
         return values
+
 
     @field_validator("query")
     def validate_query(cls, value):

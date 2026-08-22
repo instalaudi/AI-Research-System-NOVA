@@ -87,7 +87,7 @@ class NOVADistillationEngine:
     para construir su dataset de entrenamiento independiente.
     """
 
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
+    def __init__(self, ollama_url: str = "http://localhost:11438"):
         self.ollama_url = ollama_url
         self.dataset_path = Path(DATA_DIR) / "nova_dataset"
         self.dataset_path.mkdir(parents=True, exist_ok=True)

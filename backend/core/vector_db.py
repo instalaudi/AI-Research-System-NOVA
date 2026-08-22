@@ -44,14 +44,20 @@ class VectorDB:
         embeddings = await llm_client.get_embeddings(text)
         if not embeddings: return
         
-        await asyncio.to_thread(
-            self.collection.upsert,
-            ids=[article_id],
-            embeddings=[embeddings],
-            documents=[text],
-            metadatas=[metadata]
-        )
-        print(f"[VectorDB] Indexed article (Manual Vector): {article_id}")
+        # v13.9.1 CRÍTICO FIX: Agregar timeout para evitar bloqueos indefinidos de ChromaDB
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.collection.upsert,
+                    ids=[article_id],
+                    embeddings=[embeddings],
+                    documents=[text],
+                    metadatas=[metadata]
+                ),
+                timeout=30.0  # 30 segundos máximo
+            )
+        except asyncio.TimeoutError:
+            print(f"[VectorDB] WARNING: index_article timeout para {article_id} - ChromaDB bloqueado")
 
     async def upsert_batch(self, ids: List[str], documents: List[str], metadatas: List[Dict[str, Any]]):
         if not ids: return

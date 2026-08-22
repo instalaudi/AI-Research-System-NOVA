@@ -40,8 +40,16 @@ class STTService:
             # v10.7.0: Step removed (FFmpeg volumedetect) to reduce latency and event loop load.
             
             cmd_conv = ['ffmpeg', '-y', '-i', tmp_path, '-ar', '16000', '-ac', '1', wav_path]
-            proc_conv = await asyncio.create_subprocess_exec(*cmd_conv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            await proc_conv.communicate()
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd_conv,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            if result.returncode != 0:
+                logger.warning(f"FFmpeg conversion warning: {result.stderr[:200]}")
 
             if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 1000:
                 logger.warning("WAV conversion failed or file too small.")

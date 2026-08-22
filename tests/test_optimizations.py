@@ -1,16 +1,18 @@
 import sys
 import os
 import asyncio
+import pytest
 from unittest.mock import AsyncMock, patch
 
 # Añadir el directorio raíz al path para poder importar backend
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+@pytest.mark.asyncio
 async def test_routing():
     print("--- Verificando Clasificación de Intención y Enrutamiento ---")
     
     # Mock del llm_client para no depender de Ollama
-    with patch('backend.core.llm_client.llm_client.chat', new_callable=AsyncMock) as mock_chat:
+    with patch('core.llm_client.llm_client.chat', new_callable=AsyncMock) as mock_chat:
         from backend.core.intent_classifier import classify_intent
         
         # Caso 1: Consulta de Sistema
@@ -34,7 +36,7 @@ async def test_routing():
     print("\n--- Verificando Lógica de Metadatos de Sistema ---")
     # Mock de la base de datos y logger para get_system_info
     with patch('backend.main.SessionLocal'), \
-         patch('backend.core.logger.agent_logger.get_data', new_callable=AsyncMock) as mock_logger:
+         patch('core.logger.agent_logger.get_data', new_callable=AsyncMock) as mock_logger:
         
         from backend.main import get_system_info
         

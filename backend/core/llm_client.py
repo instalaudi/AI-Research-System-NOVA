@@ -10,6 +10,7 @@ import re
 from typing import Dict, Any, List, Optional, Union
 import random as _random
 from services.system_service import system_service
+from core.safe_subprocess import run_safe
 
 logger = logging.getLogger("core.llm_client")
 
@@ -24,9 +25,9 @@ def _strip_think_tags(text: str) -> str:
     return cleaned  # Puede ser vacío si todo era pensamiento — el caller lo maneja
 
 # Config values will be loaded later or used via os.getenv
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
-OLLAMA_EMBED_URL_NEW = os.getenv("OLLAMA_EMBED_URL_NEW", "http://localhost:11434/api/embed")
-OLLAMA_EMBED_URL_OLD = os.getenv("OLLAMA_EMBED_URL_OLD", "http://localhost:11434/api/embeddings")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11438/api/chat")
+OLLAMA_EMBED_URL_NEW = os.getenv("OLLAMA_EMBED_URL_NEW", "http://localhost:11438/api/embed")
+OLLAMA_EMBED_URL_OLD = os.getenv("OLLAMA_EMBED_URL_OLD", "http://localhost:11438/api/embeddings")
 
 # Import config
 from core.config import (
@@ -127,11 +128,17 @@ class PrioritySemaphore:
             raise
 
     def _release_sync(self):
+        """v13.9.1 CRÍTICO FIX: Procesar TODOS los waiters en lista, no solo uno.
+        El bug anterior hacía pop(0) una sola vez, causando starvation del resto."""
         if not self._waiters:
             self._value += 1
             return
-        _, next_fut = self._waiters.pop(0)
-        if not next_fut.done(): next_fut.set_result(True)
+        # v13.9.1 FIX: Iterar todos los waiters y procesar por prioridad
+        while self._waiters:
+            _, next_fut = self._waiters.pop(0)
+            if not next_fut.done(): 
+                next_fut.set_result(True)
+                break  # Solo procesar uno por release, el resto en próximo cycle
 
     async def __aenter__(self):
         await self.acquire(priority=1)
@@ -302,6 +309,10 @@ class LLMClient:
                             payload["generationConfig"] = {"response_mime_type": "application/json"}
                     else:
                         # OLLAMA (Local) — opciones de rendimiento restauradas
+                        if images and len(messages) > 0:
+                            clean_images = [img.split(",")[-1] if "," in img else img for img in images]
+                            messages[-1]["images"] = clean_images
+
                         payload = {
                             "model": model_to_use,
                             "messages": messages,
@@ -501,13 +512,14 @@ class LLMClient:
 
     async def ensure_model_available(self, model_name: str) -> bool:
         try:
-            process = await asyncio.to_thread(subprocess.run, ["ollama", "list"], capture_output=True, text=True, errors="replace")
+            process = await asyncio.to_thread(run_safe, ["ollama", "list"], timeout=120)
             if model_name in process.stdout: return True
-            await asyncio.to_thread(subprocess.run, ["ollama", "pull", model_name], check=True)
+            await asyncio.to_thread(run_safe, ["ollama", "pull", model_name], check=True, timeout=120)
             return True
         except: return False
 
     async def get_embeddings(self, text_or_list: Union[str, List[str]], model: Optional[str] = None) -> Union[List[float], List[List[float]]]:
+
         """
         v11.8.1: Soporte para batching y modelo local compartido.
         """

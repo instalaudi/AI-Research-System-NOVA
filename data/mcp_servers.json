@@ -1,0 +1,64 @@
+{
+  "servers": {
+    "filesystem-mcp": {
+      "name": "Local Filesystem MCP Server",
+      "version": "1.0.0",
+      "tools": [
+        {
+          "name": "list_directory",
+          "description": "Lista los archivos y carpetas de un directorio local del proyecto.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Ruta relativa o absoluta" }
+            },
+            "required": ["path"]
+          }
+        },
+        {
+          "name": "read_file_preview",
+          "description": "Lee las primeras N líneas de un archivo del proyecto.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Ruta al archivo" },
+              "max_lines": { "type": "integer", "default": 50 }
+            },
+            "required": ["path"]
+          }
+        }
+      ]
+    },
+    "database-mcp": {
+      "name": "NOVA SQLite Database Inspector",
+      "version": "1.0.0",
+      "tools": [
+        {
+          "name": "get_table_schema",
+          "description": "Obtiene la estructura DDL y columnas de una tabla SQLite.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "table_name": { "type": "string" }
+            },
+            "required": ["table_name"]
+          }
+        }
+      ]
+    },
+    "system-diagnostics-mcp": {
+      "name": "System Health & Resource Diagnostics",
+      "version": "1.0.0",
+      "tools": [
+        {
+          "name": "get_system_telemetry",
+          "description": "Retorna métricas en tiempo real de CPU, RAM y latencia del agente.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ]
+    }
+  }
+}

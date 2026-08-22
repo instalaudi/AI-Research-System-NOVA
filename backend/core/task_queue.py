@@ -8,11 +8,12 @@ import threading
 from typing import Any, Callable, Optional
 
 try:
-    import redis
+    import redis  # type: ignore
 except ImportError:
     redis = None  # Redis Optional; fallback to file-backed queue
 
-import fakeredis
+import fakeredis  # type: ignore
+
 from core.config import DEFAULT_MAX_WORKERS, TASK_DYNAMIC_TIMEOUT_CAP, DATA_DIR # type: ignore
 from core.llm_client import llm_client, AbortBackgroundTask
 
@@ -20,7 +21,7 @@ class TaskQueue:
     def __init__(self, concurrency: Optional[int] = None):
         self.storage_dir = Path(DATA_DIR) / "task_queue"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # Thread-safe file lock for synchronous _load_queue / _dump_queue
 
         redis_url = os.getenv("REDIS_URL", "").strip()
         self.use_redis = False

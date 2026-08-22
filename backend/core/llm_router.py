@@ -4,6 +4,7 @@ from core.llm_client import LLMClient
 from core.config import (
     OLLAMA_URL, LLM_DEV_URL, LLM_AUDIT_URL,
     LLM_MODEL_NAME, LLM_CODER_MODEL, LLM_FAST_MODEL,
+    LLM_AUDIT_MODEL, LLM_VISION_MODEL,
     DISTILL_MODEL_REASONING
 )
 
@@ -17,8 +18,8 @@ class LLMRouter:
         self._engines: Dict[str, LLMClient] = {
             "default": LLMClient(model=LLM_MODEL_NAME, base_url=OLLAMA_URL, name="Main"),
             "developer": LLMClient(model=LLM_CODER_MODEL, base_url=LLM_DEV_URL, name="Developer"),
-            "auditor": LLMClient(model="phi3:3b", base_url=LLM_AUDIT_URL, name="Auditor"),
-            "vision": LLMClient(model="llava-llama3", base_url=LLM_AUDIT_URL, name="Vision"),
+            "auditor": LLMClient(model=LLM_AUDIT_MODEL, base_url=LLM_AUDIT_URL, name="Auditor"),
+            "vision": LLMClient(model=LLM_VISION_MODEL, base_url=LLM_AUDIT_URL, name="Vision"),
             "distillery": LLMClient(model=DISTILL_MODEL_REASONING, base_url=OLLAMA_URL, name="Distillery")
         }
         self._lock = asyncio.Lock()

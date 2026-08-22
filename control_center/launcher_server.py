@@ -14,11 +14,17 @@ from collections import deque
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
+# v13.9.5: Asegurar UTF-8 en subprocesos Windows
+os.environ['PYTHONIOENCODING'] = 'utf-8:replace'
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 import psutil
+
+from dotenv import load_dotenv
+import secrets
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR     = Path(__file__).parent
@@ -26,9 +32,18 @@ PROJECT_ROOT = BASE_DIR.parent
 CONFIG_FILE  = BASE_DIR / "nova_launcher.json"
 HTML_FILE    = BASE_DIR / "control_center.html"
 
-# ── Security (C-2 Audit Fix) ───────────────────────────────────────────────
-CC_API_KEY = os.getenv("CC_API_KEY", "nova-cc-cambiar-en-produccion")
+# Load environment configuration
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
+load_dotenv(PROJECT_ROOT / ".env")
+
+# ── Security ──────────────────────────────────────────────────────────────────
+CC_API_KEY = os.getenv("CC_API_KEY")
+if not CC_API_KEY or CC_API_KEY == "nova-cc-cambiar-en-produccion":
+    CC_API_KEY = secrets.token_urlsafe(32)
+    os.environ["CC_API_KEY"] = CC_API_KEY
+
 CC_AUTH_HEADER = "X-CC-API-Key"
+
 
 # ── Default Config ─────────────────────────────────────────────────────────────
 DEFAULT_CONFIG = {
@@ -44,7 +59,11 @@ DEFAULT_CONFIG = {
         "DISTILL_MODEL_REASONING": "qwen2.5:1.5b",
         "DISTILL_MODEL_GENERAL": "qwen2.5:1.5b",
         "LLM_EMBED_MODEL": "all-MiniLM-L6-v2",
-        "OLLAMA_URL":      "http://localhost:11434/api/chat"
+        "LLM_AUDIT_MODEL": "phi3:mini",
+        "LLM_VISION_MODEL": "llava-llama3:latest",
+        "OLLAMA_URL":      "http://localhost:11438/api/chat",
+        "LLM_DEV_URL":     "http://localhost:11439/api/chat",
+        "LLM_AUDIT_URL":   "http://localhost:11440/api/chat",
     },
     "performance": {
         "RATE_LIMIT_REQUESTS":    "100",
@@ -74,13 +93,31 @@ def load_config() -> dict:
 def save_config(cfg: dict):
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
+def _ollama_ports_to_probe() -> list[int]:
+    """Puertos de los 3 motores configurados en nova_launcher.json."""
+    from urllib.parse import urlparse
+    ports: list[int] = []
+    models_cfg = load_config().get("models", {})
+    for key in ("OLLAMA_URL", "LLM_DEV_URL", "LLM_AUDIT_URL"):
+        url = models_cfg.get(key, "")
+        if not url:
+            continue
+        parsed = urlparse(url)
+        if parsed.port and parsed.port not in ports:
+            ports.append(parsed.port)
+    for svc in ("ollama_1", "ollama_2", "ollama_3"):
+        p = SERVICES.get(svc, {}).get("port")
+        if p and p not in ports:
+            ports.append(p)
+    return ports
+
 # ── Service Registry ───────────────────────────────────────────────────────────
 SERVICES = {
     "backend":  {"port": 8000},
     "frontend": {"port": 3000},
-    "ollama_1": {"port": 11434},
-    "ollama_2": {"port": 11435},
-    "ollama_3": {"port": 11436},
+    "ollama_1": {"port": 11438},
+    "ollama_2": {"port": 11439},
+    "ollama_3": {"port": 11440},
 }
 
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -113,10 +150,12 @@ def _log(svc: str, line: str):
         pass
 
 def _pipe_reader(svc: str, stream):
-    """Reads subprocess stdout in a background thread."""
+    """Reads subprocess stdout in a background thread and decodes bytes safely."""
     try:
         for line in stream:
             if not line: break
+            if isinstance(line, bytes):
+                line = line.decode('utf-8', errors='replace')
             _log(svc, line)
     except Exception:
         pass
@@ -124,37 +163,48 @@ def _pipe_reader(svc: str, stream):
 def _build_env(cfg: dict) -> dict:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     for section in ("models", "performance", "features"):
         for k, v in cfg.get(section, {}).items():
             env[k] = str(v)
     return env
 
 def _kill_port(port: int, wait_seconds: int = 5):
-    """Force-kills any process occupying a TCP port (Windows only) and waits for it to be released."""
+    """Force-kills any process occupying a TCP port (Windows only) and waits for it to be released.
+    HOTFIX v13.9.1: Mejorar parsing robusto de netstat y proteger contra matar launcher.
+    """
     if os.name != "nt": return
     import psutil
     import time
+    import re
+
+    launcher_pid = os.getpid()  # No matar al launcher mismo
 
     def _get_pids():
         pids = set()
-        # Fallback robusto usando netstat en Windows (resuelve problemas de permisos en psutil)
+        # HOTFIX: Usar regex para parsear netstat de forma robusta, incluyendo IPv6 y direcciones entre corchetes.
         try:
-            output = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, shell=False)
+            output = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, encoding='latin-1', errors='replace', shell=False)
             if output.returncode == 0:
+                # Regex para parsear líneas de netstat con local:port y PID.
+                # Ejemplos válidos:
+                # TCP    127.0.0.1:9999    0.0.0.0:0    LISTENING    2492
+                # TCP    [::]:11440    [::]:0    LISTENING    1234
+                pattern = r"^\s*TCP\s+(.+?):(\d+)\s+(.+?):\d+\s+\S+\s+(\d+)"
                 for line in output.stdout.splitlines():
-                    if f"127.0.0.1:{port}" in line or f"0.0.0.0:{port}" in line or f"[::]:{port}" in line:
-                        parts = line.strip().split()
-                        if len(parts) >= 5:
-                            pid = int(parts[-1])
-                            if pid > 0:
-                                pids.add(pid)
+                    match = re.search(pattern, line)
+                    if match:
+                        port_num = int(match.group(2))
+                        pid = int(match.group(4))
+                        if port_num == port and pid > 0 and pid != launcher_pid:
+                            pids.add(pid)
         except Exception:
             pass
 
         try:
             for conn in psutil.net_connections(kind='inet'):
                 if conn.laddr and conn.laddr.port == port:
-                    if conn.pid and conn.pid > 0:
+                    if conn.pid and conn.pid > 0 and conn.pid != launcher_pid:
                         pids.add(conn.pid)
         except Exception:
             pass
@@ -180,7 +230,7 @@ def _kill_port(port: int, wait_seconds: int = 5):
             except Exception:
                 # Final fallback to taskkill
                 subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], 
-                               capture_output=True, shell=False)
+                               capture_output=True, text=True, encoding='latin-1', errors='replace', shell=False)
         
         # Wait a bit for the OS to release the socket
         time.sleep(1)
@@ -205,7 +255,7 @@ def _kill_tree(pid: int):
     except Exception:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"],
-                           capture_output=True)
+                           capture_output=True, text=True, encoding='latin-1', errors='replace')
 
 def _cleanup_ollama_blobs(svc: str):
     """v13.6: Limpia archivos de modelos parciales/corruptos de Ollama antes de arrancar."""
@@ -237,18 +287,18 @@ def _check_backend_deps(python_exe: str, cwd: str, svc: str):
     try:
         # Intento rápido de ver si faltan librerías críticas
         check_cmd = [python_exe, "-c", "import browser_use, lightrag, playwright, pyautogui, cv2"]
-        result = subprocess.run(check_cmd, cwd=cwd, capture_output=True, text=True)
+        result = subprocess.run(check_cmd, cwd=cwd, capture_output=True, text=True, encoding='latin-1', errors='replace')
         
         if result.returncode != 0:
             _log(svc, "[Launcher] 📦 Detectadas librerías faltantes. Instalando dependencias (esto puede tardar)...")
             try:
                 # Ejecutar pip install
                 install_cmd = [python_exe, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"]
-                subprocess.run(install_cmd, cwd=cwd, check=False)
+                subprocess.run(install_cmd, cwd=cwd, check=False, text=True, encoding='latin-1', errors='replace')
                 
                 # Caso especial: Playwright necesita instalar sus navegadores
                 _log(svc, "[Launcher] 🌐 Configurando motores de navegación...")
-                subprocess.run([python_exe, "-m", "playwright", "install", "chromium"], cwd=cwd, check=False)
+                subprocess.run([python_exe, "-m", "playwright", "install", "chromium"], cwd=cwd, check=False, text=True, encoding='latin-1', errors='replace')
                 _log(svc, "[Launcher] ✅ Dependencias actualizadas.")
             except Exception as pip_err:
                 _log(svc, f"[Launcher] ⚠️ No se pudieron instalar dependencias completamente: {pip_err}")
@@ -292,20 +342,22 @@ def start_service(svc: str):
 
     elif svc == "frontend":
         cwd   = str(PROJECT_ROOT / "frontend")
-        cmd   = "npm run dev" if IS_WIN else ["npm", "run", "dev"]
-        shell = IS_WIN
+        cmd   = ["npm.cmd", "run", "dev"] if IS_WIN else ["npm", "run", "dev"]
+        shell = False
 
     elif svc.startswith("ollama"):
-        idx  = int(svc.split("_")[1])
-        port = 11433 + idx
+        port = SERVICES.get(svc, {}).get("port", 11437 + int(svc.split("_")[1]))
         env["OLLAMA_HOST"] = f"127.0.0.1:{port}"
-        
+        # Un modelo cargado por motor → menos RAM en reposo
+        env.setdefault("OLLAMA_NUM_PARALLEL", "1")
+        env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
+
         # v13.6: Limpiar basura de modelos antes de arrancar Ollama
         _cleanup_ollama_blobs(svc)
         
         cwd   = str(PROJECT_ROOT)
-        cmd   = "ollama serve" if IS_WIN else ["ollama", "serve"]
-        shell = IS_WIN
+        cmd   = ["ollama", "serve"]
+        shell = False
     else:
         return
         
@@ -316,6 +368,7 @@ def start_service(svc: str):
         _kill_port(svc_port)
 
     try:
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if IS_WIN else 0
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
@@ -323,10 +376,9 @@ def start_service(svc: str):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=False,
             shell=shell,
+            creationflags=creationflags,
         )
         state["proc"]   = proc
         state["pid"]    = proc.pid
@@ -399,21 +451,31 @@ def _validate_temp_token(token: str) -> bool:
 def _require_api_key(request):
     """Valida el API key en todos los endpoints de la API (GET, POST, DELETE, etc.).
     Para streams/EventSource, se permite validación vía token de un solo uso o query param 'key'.
+    v13.9.1 HOTFIX: Corregir validación para permitir token temporal sin header
     """
-    provided = request.headers.get(CC_AUTH_HEADER, "")
-    if not provided:
-        provided = request.query_params.get("key", "")
-        
-    # Verificar si es una API Key válida
-    if provided and provided == CC_API_KEY:
-        return
-        
-    # Verificar si es un Token de un solo uso válido
-    provided_token = request.query_params.get("token", "")
+    # Intentar validar por header X-CC-API-Key
+    provided = request.headers.get(CC_AUTH_HEADER, "").strip()
+    if provided:
+        if provided == CC_API_KEY:
+            return
+        # Si hay header pero es inválido, rechazar directamente
+        raise HTTPException(status_code=403, detail="Invalid X-CC-API-Key header")
+    
+    # Si no hay header, intentar por query param 'key'
+    provided_key = request.query_params.get("key", "").strip()
+    if provided_key:
+        if provided_key == CC_API_KEY:
+            return
+        # Si hay key pero es inválida, rechazar directamente
+        raise HTTPException(status_code=403, detail="Invalid API key parameter")
+    
+    # Si no hay header ni key, intentar por token temporal (para streams)
+    provided_token = request.query_params.get("token", "").strip()
     if provided_token and _validate_temp_token(provided_token):
         return
-        
-    raise HTTPException(status_code=403, detail="Invalid or missing API key or token")
+    
+    # Si llegamos aquí, ningún método de autenticación funcionó
+    raise HTTPException(status_code=403, detail="Missing or invalid authentication (header, key, or token)")
 
 
 @app.post("/api/auth/token")
@@ -512,7 +574,8 @@ async def api_start_all(request: Request):
             try:
                 # Use a small timeout for the check
                 with httpx.Client(timeout=2.0) as client:
-                    resp = client.get("http://127.0.0.1:11434/api/tags")
+                    port_1 = SERVICES.get("ollama_1", {}).get("port", 11438)
+                    resp = client.get(f"http://127.0.0.1:{port_1}/api/tags")
                     if resp.status_code == 200:
                         ollama_ready = True
                         break
@@ -563,16 +626,27 @@ async def api_get_ollama_models(request: Request):
     _require_api_key(request)
     """v11.9.18: Fetch available models from Ollama to avoid typing errors."""
     import httpx
-    try:
-        # We try the default port 11434 where Ollama usually runs
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("http://localhost:11434/api/tags")
-            if resp.status_code == 200:
-                data = resp.json()
-                return {"models": [m["name"] for m in data.get("models", [])]}
-            return {"models": [], "error": f"Ollama returned {resp.status_code}"}
-    except Exception as e:
-        return {"models": [], "error": str(e)}
+    last_error = "Ollama no responde"
+    merged: list[str] = []
+    active_ports: list[int] = []
+    for port in _ollama_ports_to_probe():
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"http://127.0.0.1:{port}/api/tags")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    active_ports.append(port)
+                    for m in data.get("models", []):
+                        name = m.get("name")
+                        if name and name not in merged:
+                            merged.append(name)
+                else:
+                    last_error = f"puerto {port}: HTTP {resp.status_code}"
+        except Exception as e:
+            last_error = f"puerto {port}: {e}"
+    if merged:
+        return {"models": merged, "ports": active_ports}
+    return {"models": [], "error": last_error}
 
 
 @app.get("/api/logs/{svc}/stream")
@@ -666,4 +740,43 @@ if __name__ == "__main__":
     print(r"   Control Node: http://localhost:9999")
     print()
     # FIX C-2 (Auditoría v11.9.18): Bind a 127.0.0.1 — solo acceso local
-    uvicorn.run(app, host="127.0.0.1", port=9999, log_level="warning")
+
+    def _force_free_port(port, max_attempts=5):
+        import time, os
+        for attempt in range(max_attempts):
+            try:
+                out = os.popen(f'netstat -ano | findstr :{port}').read()
+                if not out:
+                    print(f"[Launcher] Puerto {port} libre")
+                    return
+                # Mata todos los PIDs que usan el puerto
+                pids = set()
+                for line in out.strip().split('\n'):
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pids.add(parts[-1])
+                for pid in pids:
+                    print(f"[Launcher] Matando PID {pid} en puerto {port}")
+                    os.system(f'taskkill /PID {pid} /F >nul 2>&1')
+                time.sleep(2)
+            except Exception as e:
+                print(f"[Launcher] Error al limpiar puerto {port}: {e}")
+                time.sleep(1)
+        print(f"[Launcher] No se pudo liberar el puerto {port}")
+
+    # Ensure port 9999 is free before binding (helps avoid EXIT code 15 on Windows)
+    if os.name == "nt":
+        _force_free_port(9999)
+
+    # Diagnostic wrapper: capture full traceback to help debug exit code 15
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=9999, log_level="info")
+    except Exception as e:
+        import traceback
+        print("ERROR CRÍTICO:", e)
+        traceback.print_exc()
+        try:
+            input("Presiona Enter para salir...")
+        except Exception:
+            pass
+        sys.exit(1)

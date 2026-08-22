@@ -10,9 +10,10 @@ from core.config import MAX_ARTICLES_PER_TOPIC, RELEVANCE_THRESHOLD
 from core.llm_client import llm_client
 
 try:
-    import feedparser
+    import feedparser  # type: ignore
 except ImportError:
     feedparser = None
+
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
@@ -34,7 +35,8 @@ google_scholar_semaphore = asyncio.Semaphore(1)
 
 # SEC-05: SSRF Protection - Blocked schemes and domains
 BLOCKED_SCHEMES = ['file', 'ftp', 'gopher', 'data', 'javascript']
-BLOCKED_HOSTS = ['localhost', '127.0.0.1', '192.168', '10.', '172.', '0.0.0.0', 'internal']
+BLOCKED_HOSTS = ['localhost', '127.0.0.1', '192.168.', '10.', '172.', '0.0.0.0', '169.254.', '::1', '[::1]', 'internal']
+
 
 def _is_valid_url(url: str) -> bool:
     """
@@ -535,24 +537,21 @@ class ExplorerAgent(BaseAgent):
                 for img in soup.find_all("img"):
                     src = img.get("src")
                     if not src: continue
-                    # Resolve relative URLs
                     absolute_src = urllib.parse.urljoin(url, src)
                     if _is_valid_url(absolute_src) and any(ext in absolute_src.lower() for ext in ['.jpg', '.jpeg', '.png', '.svg', '.webp']):
-                        # Look for potential technical charts/diagrams (keywords in alt or src)
                         alt = img.get("alt", "").lower()
                         if any(kw in alt or kw in absolute_src.lower() for kw in ['chart', 'graph', 'diagram', 'figure', 'stats', 'table']):
                             images.append({"url": absolute_src, "alt": alt})
                             if len(images) >= 3: break
 
-                # Remove script and style elements
-                for script in soup(["script", "style"]):
-                    script.decompose()
-                
-                text = soup.get_text(separator=' ', strip=True)[:2000]  # Cap at 2k chars
-                return {"text": text, "images": images}
+                from agents.browser_scraper import browser_scraper
+                cleaned_data = browser_scraper.clean_html_to_markdown(raw_text)
+                text = cleaned_data.get("content", "")[:2500]  # Cap enriquecido a 2.5k chars
+                return {"text": text, "images": images, "title": cleaned_data.get("title", "")}
         except Exception as e:
             print(f"[{self.name}] Error fetching content from {url}: {e}")
         return {"text": "", "images": []}
+
 
     async def execute(self, topic: str, **kwargs) -> List[Dict[str, str]]:
         """

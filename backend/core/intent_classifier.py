@@ -44,7 +44,10 @@ _RESEARCH_TRIGGERS = [
     r"analiza\b", r"analisa\b", r"interpreta\b", r"describe\b.*imagen",
     r"quiero.*aprender.*sobre", r"necesito.*informaci[oó]n.*profunda",
     r"hazme.*investigaci[oó]n", r"despliega.*agentes",
-    r"inicia.*investigaci[oó]n", r"qué.*relación.*hay", r"quien\s+es\b",
+    r"inicia.*investigaci[oó]n", r"qué.*relación.*hay",
+    # v13.9.2 FIX: Mejorar detección de preguntas de identidad
+    r"quie?n\s+(?:eres|es|soy|eras|serás|sería)\b",  # Detecta "quién eres", "quién es", etc.
+    r"quien\s+(?:eres|es)\s+(?:quien|que|tu|tú|me)",  # "quién eres quien"
     r"qué.*vínculo\b", r"conecta\b.*con\b"
 ]
 
@@ -238,7 +241,8 @@ async def _llm_classify_fallback(query: str) -> str:
         )
         
         # Extraer la intención usando regex para mayor seguridad
-        intent_match = re.search(r"INTENCIN:\s*(KNOWLEDGE|RESEARCH|CONVERSATION|COMPUTATION|BOOK_QUERY|SYSTEM)", response.upper())
+        # v13.9.2 FIX: Soportar "INTENCIÓN" con tilde (salida del LLM en español)
+        intent_match = re.search(r"INTENCI[ÓO]N:\s*(KNOWLEDGE|RESEARCH|CONVERSATION|COMPUTATION|BOOK_QUERY|SYSTEM|GWS|VISION)", response.upper())
         if intent_match:
             return intent_match.group(1)
             

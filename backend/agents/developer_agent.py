@@ -229,10 +229,19 @@ Escribe todo el código real dentro de la clave 'content'.
             is_approved, critique = await auditor_agent.audit_project(temp_files, requirement, ignore_overdrive=True)
 
             if is_approved:
-                files_dict = temp_files
-                break
+                # v14.0: Validación TDD en Sandbox Aislado
+                from core.code_sandbox import code_sandbox
+                sandbox_res = code_sandbox.run_tests_in_sandbox(temp_files)
+                if not sandbox_res.get("success", True):
+                    logger.warning(f"[DeveloperAgent] ⚠️ Sandbox falló: {sandbox_res.get('error_trace')}")
+                    critique = f"Fallo en ejecución de Sandbox / Tests TDD:\n{sandbox_res.get('error_trace')}"
+                    is_approved = False
+                else:
+                    files_dict = self._ensure_standard_artifacts(temp_files, requirement)
+                    break
             else:
                 logger.warning(f"[DeveloperAgent] Auditor rechazó la build: {critique}")
+
                 
                 # v11.9.20: Detección de errores repetidos — si la crítica es >80% similar
                 # a la anterior, el modelo está atascado y más intentos no ayudarán
@@ -625,4 +634,41 @@ Responde SOLO con JSON:
 
         return False
 
+    @staticmethod
+    def _ensure_standard_artifacts(files_dict: Dict[str, str], requirement: str) -> Dict[str, str]:
+        """Asegura que el proyecto incluya README.md y Dockerfile estándar si no existen."""
+        result = dict(files_dict)
+        
+        # 1. Asegurar README.md
+        if not any(k.lower() == "readme.md" for k in result.keys()):
+            result["README.md"] = f"""# Proyecto Generado por NOVA AI
+
+## Requerimiento
+{requirement}
+
+## Ejecución Local
+- Si es Python: `pip install -r requirements.txt` y luego `python main.py` o `python app.py`.
+- Si es Node: `npm install` y luego `npm start` o `npm run dev`.
+
+---
+*Generado automáticamente con validación TDD por NOVA v14.0.*
+"""
+
+        # 2. Asegurar Dockerfile si es Python y no existe
+        has_python = any(k.endswith(".py") for k in result.keys())
+        has_dockerfile = any(k.lower() == "dockerfile" for k in result.keys())
+        if has_python and not has_dockerfile:
+            entry_point = "main.py" if "main.py" in result else ("app.py" if "app.py" in result else "server.py")
+            result["Dockerfile"] = f"""FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt || true
+COPY . .
+EXPOSE 8000
+CMD ["python", "{entry_point}"]
+"""
+        return result
+
+
 developer_agent = DeveloperAgent()
+

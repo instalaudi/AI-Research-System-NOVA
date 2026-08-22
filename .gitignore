@@ -37,9 +37,16 @@ wheels/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 knowledge.db
+*.bak
+*.wav
+*.mp3
+
 
 # Logs
 *.log
@@ -54,8 +61,13 @@ backend/venv/
 Thumbs.db
 
 # Project-specific
-data/
+data/*
+!data/mcp_servers.json
+backend/data/
 chroma_db/
+
+
+
 frontend/node_modules/
 knowledge_db.json
 tests/verify_*.py
@@ -73,15 +85,20 @@ frontend/out/
 *.mp3
 
 # Credentials & Sensitive Files
-"api key Gemini y Groq.txt"
-*credentials*
+api key*
 *key*.txt
+*credentials*
+*.env
+*.env.*
 
 # System & Temp Files
-startup_error.txt
+startup_error*.txt
+launcher_debug*.txt
 artifacts/
+tmp/
 
 # ML/AI Models (ONNX, large binary models)
 backend/core/models/
 *.onnx
 *.bin
+

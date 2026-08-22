@@ -159,31 +159,126 @@ class MemoryService:
         if not lines: return ""
         return "### MEMORIA A LARGO PLAZO\n" + "\n".join(lines) + "\n"
 
+    def get_recent_chat_history(self, user_id: int, db: Any, num_turns: int = 5) -> List[Dict[str, str]]:
+        """
+        v13.9.5 FIX: Recupera los últimos N turnos de conversación del ChatLog
+        para inyectarlos en el array messages[] y dar contexto conversacional.
+        
+        Args:
+            user_id: ID del usuario
+            db: Sesión de base de datos
+            num_turns: Número de turnos (pares user-assistant) a recuperar
+            
+        Returns:
+            Lista de dicts con {"role": "user"|"assistant", "content": "..."}
+        """
+        try:
+            from core.database import ChatLog
+            
+            # Recuperar los últimos (num_turns * 2) mensajes = num_turns pares
+            recent_logs = db.query(ChatLog).filter(
+                ChatLog.user_id == user_id
+            ).order_by(ChatLog.timestamp.desc()).limit(num_turns * 2).all()
+            
+            if not recent_logs:
+                return []
+            
+            # Invertir para obtener orden cronológico (más antiguo primero)
+            recent_logs = list(reversed(recent_logs))
+            
+            # Convertir a formato de messages
+            history = []
+            for log in recent_logs:
+                history.append({
+                    "role": log.role,
+                    "content": log.content
+                })
+            
+            return history
+        except Exception as e:
+            logger.error(f"Error recuperando historial de chat: {e}")
+            return []
+
     # --- MÉTODOS REQUERIDOS POR CHAT_SERVICE Y ROUTERS ---
 
     async def build_rag_context(self, intent: str, query: str, files_context: str, db: Any) -> str:
         """
-        v13.8.0: Construye el contexto ultra-enriquecido combinando 
-        Memoria JSON, LightRAG y el nuevo Puente Graph-RAG SQL.
+        v14.0: Construye el contexto híbrido ultra-enriquecido combinando:
+        1. Hybrid RAG (Dense ChromaDB + Sparse BM25 + Reciprocal Rank Fusion)
+        2. Memoria Episódica Jerárquica (Hitos pasados e investigaciones previas)
+        3. Memoria JSON estructurada y Grafo de Conocimiento (LightRAG / SQL).
         """
-        # 1. Obtener contexto del Grafo de Conocimiento Global (LightRAG)
-        rag_context = await lightrag_manager.query(query, mode="local")
-        
-        # 2. Obtener contexto del Puente Graph-RAG Local (SQL Structural Graph)
-        from core.knowledge_base import knowledge_base
-        sql_graph_results = await knowledge_base.search_enhanced(query, limit=3)
-        sql_context = ""
-        if sql_graph_results:
-            sql_context = "\n[CONOCIMIENTO ESTRUCTURAL RELACIONADO]:\n"
-            for res in sql_graph_results:
-                sql_context += f"- {res['title']}: {res['content'][:300]} (Fuente: {res['source']})\n"
+        # 1. Recuperación Híbrida RRF (Dense ChromaDB + Sparse BM25)
+        hybrid_context = ""
+        try:
+            from core.hybrid_retriever import hybrid_retriever
+            from core.vector_db import vector_db
 
-        # 3. Obtener Memoria JSON estructurada (Identidad/Preferencias)
+            async def _dense_search(q: str, top_k: int = 5):
+                hits = await vector_db.search_similar(q, limit=top_k)
+                dense_docs = []
+                for h in (hits or []):
+                    dense_docs.append({
+                        "id": h.get("id", str(h.get("document", "")[:30])),
+                        "text": h.get("document", ""),
+                        "metadata": h.get("metadata", {}),
+                        "source": "chromadb"
+                    })
+                return dense_docs
+
+            hybrid_hits = await hybrid_retriever.retrieve(query, dense_search_fn=_dense_search, top_k=4)
+            if hybrid_hits:
+                hybrid_context = "\n[CONOCIMIENTO HÍBRIDO RRF (BM25 + VECTORIAL)]:\n"
+                for h in hybrid_hits:
+                    src = h.get("metadata", {}).get("source", h.get("source", "kb"))
+                    rrf = h.get("rrf_score", 0.0)
+                    hybrid_context += f"- [{src} | rrf:{rrf}] {h.get('text', '')[:350]}\n"
+        except Exception as e:
+            logger.warning(f"[MemoryService] Hybrid retriever error: {e}")
+
+        # 2. Recuperación de Memoria Episódica
+        episodic_context = ""
+        try:
+            from core.episodic_memory import episodic_memory
+            episodes = episodic_memory.recall_relevant_episodes(query, limit=2)
+            if episodes:
+                episodic_context = "\n[HITOS Y MEMORIA EPISÓDICA RELACIONADA]:\n"
+                for ep in episodes:
+                    episodic_context += f"- [{ep.get('category', 'general')}] {ep.get('topic')}: {ep.get('summary')}\n"
+        except Exception as e:
+            logger.warning(f"[MemoryService] Episodic memory recall error: {e}")
+
+        # 3. Contexto del Grafo de Conocimiento Global (LightRAG)
+        rag_context = ""
+        try:
+            rag_context = await lightrag_manager.query(query, mode="naive")
+            if not rag_context or "Contexto de grafo no disponible" in rag_context:
+                rag_context = ""
+        except Exception as e:
+            logger.debug(f"LightRAG fallback: {e}")
+
+        # 4. Contexto del Puente Graph-RAG Local (SQL Structural Graph)
+        sql_context = ""
+        try:
+            from core.knowledge_base import knowledge_base
+            sql_graph_results = await knowledge_base.search_enhanced(query, limit=3)
+            if sql_graph_results:
+                sql_context = "\n[CONOCIMIENTO ESTRUCTURAL RELACIONADO]:\n"
+                for res in sql_graph_results:
+                    sql_context += f"- {res['title']}: {res['content'][:300]} (Fuente: {res['source']})\n"
+        except Exception as e:
+            logger.debug(f"SQL Graph search fallback: {e}")
+
+        # 5. Obtener Memoria JSON estructurada (Identidad/Preferencias)
         json_memory = self.get_formatted_json_memory()
-        
-        # 4. Combinar todas las capas de realidad
-        full_context = f"{json_memory}\n{sql_context}\n\n### CONOCIMIENTO NARRATIVO (GRAFO)\n{rag_context}"
-        return full_context
+
+        # 6. Combinar todas las capas de contexto
+        full_context = f"{json_memory}\n{episodic_context}\n{hybrid_context}\n{sql_context}"
+        if rag_context.strip():
+            full_context += f"\n\n### CONOCIMIENTO NARRATIVO (GRAFO)\n{rag_context}"
+            
+        return full_context.strip()
+
 
     async def ingest_document(self, file_stream, filename: str, user_id: int):
         """Wrapper para el Librarian para ingesta de libros/documentos."""
@@ -220,7 +315,7 @@ class MemoryService:
         """Analiza la query para extraer hechos y guardarlos en JSON y Grafo."""
         try:
             # 1. Extracción vía LLM
-            prompt = MEMORY_EXTRACTION_PROMPT.format(user_query=query)
+            prompt = MEMORY_EXTRACTION_PROMPT.replace("{user_query}", query)
             extracted = await llm_gateway.chat(
                 [
                     {"role": "system", "content": "Extrae conocimiento relevante de la siguiente consulta. Responde solo con el hecho extraído de forma clara y directa, o 'NONE' si no hay información personal o útil."}, 

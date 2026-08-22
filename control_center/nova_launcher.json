@@ -4,14 +4,18 @@
     "num_ollama_engines": 3
   },
   "models": {
-    "LLM_FAST_MODEL": "qwen2.5:3b",
-    "LLM_MODEL_NAME": "qwen2.5:3b",
-    "LLM_CODER_MODEL": "qwen2.5-coder:7b",
-    "LLM_THINKER_MODEL": "qwen2.5:1.5b",
-    "DISTILL_MODEL_REASONING": "qwen2.5:1.5b",
-    "DISTILL_MODEL_GENERAL": "qwen2.5:1.5b",
+    "LLM_FAST_MODEL": "nova-v1:latest",
+    "LLM_MODEL_NAME": "nova-v1:latest",
+    "LLM_CODER_MODEL": "qwen2.5-coder:3b",
+    "LLM_THINKER_MODEL": "nova-v1:latest",
+    "DISTILL_MODEL_REASONING": "nova-v1:latest",
+    "DISTILL_MODEL_GENERAL": "nova-v1:latest",
     "LLM_EMBED_MODEL": "all-MiniLM-L6-v2",
-    "OLLAMA_URL": "http://localhost:11434/api/chat"
+    "LLM_AUDIT_MODEL": "qwen2.5:1.5b",
+    "LLM_VISION_MODEL": "moondream:latest",
+    "OLLAMA_URL": "http://localhost:11438/api/chat",
+    "LLM_DEV_URL": "http://localhost:11439/api/chat",
+    "LLM_AUDIT_URL": "http://localhost:11440/api/chat"
   },
   "performance": {
     "RATE_LIMIT_REQUESTS": "100",
