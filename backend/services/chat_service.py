@@ -145,7 +145,44 @@ class ChatService:
         is_social_only = len(query.split()) <= 12 and any(x in query_lower for x in ["hola", "buenos dias", "quien eres", "como estas", "qué tal", "saludos"])
         is_general_query = any(x in query_lower for x in general_query_patterns) or (intent == "CONVERSATION")
 
+        # ── INTENCIÓN VISION (Cámara web / Pantalla) ──
+        if intent == "VISION" or any(kw in query_lower for kw in ["webcam", "web cam", "cámara", "camara"]):
+            try:
+                from services.vision_service import vision_service
+                import asyncio
+                
+                is_screen = "pantalla" in query_lower
+                if is_screen:
+                    cap_res = await asyncio.to_thread(vision_service.capture_screen)
+                else:
+                    cap_res = await asyncio.to_thread(vision_service.capture_webcam)
+
+                if cap_res.get("b64"):
+                    b64_img = cap_res.get("b64")
+                    v_prompt = f"El usuario pregunta: '{query}'. Analiza la imagen capturada de la {'pantalla' if is_screen else 'cámara web'} y responde en español detallando lo que ves."
+                    v_answer = await llm_gateway.chat(
+                        [{"role": "user", "content": v_prompt}],
+                        lane="realtime",
+                        images=[b64_img],
+                        priority=0,
+                        agent_name="vision"
+                    )
+                    if not v_answer:
+                        v_answer = "Capturé la imagen de la cámara web, pero el modelo de visión no generó una respuesta."
+                    
+                    db.add(ChatLog(user_id=user_id, role="assistant", content=v_answer, intent="VISION"))
+                    db.commit()
+                    return {"query": query, "answer": v_answer, "mode": "vision", "needs_research": False}
+                else:
+                    v_err = "No pude acceder a la cámara web en este momento. Asegúrate de que no esté siendo utilizada por otra aplicación."
+                    db.add(ChatLog(user_id=user_id, role="assistant", content=v_err, intent="VISION"))
+                    db.commit()
+                    return {"query": query, "answer": v_err, "mode": "vision", "needs_research": False}
+            except Exception as e:
+                logger.error(f"[ChatService] Error procesando intención VISION: {e}")
+
         if intent == "PROJECT_BUILD":
+
             try:
                 # v11.9.18: Removed brevity check. We now trust the smarter IntentClassifier 
                 # to distinguish between social chat and direct action commands.

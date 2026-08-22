@@ -85,9 +85,12 @@ _GWS_TRIGGERS = [
 ]
 
 _VISION_TRIGGERS = [
-    r"mira\s+(?:la\s+)?pantalla", r"qu[eé]\s+ves", r"captura", r"haz\s+clic", 
-    r"busca\s+en\s+pantalla", r"grounding", r"presiona", r"escribe"
+    r"mira\s+(?:la\s+)?pantalla", r"qu[eé]\s+(?:ves|vez|hay|observas|muestra)", r"captura", r"haz\s+clic", 
+    r"busca\s+en\s+pantalla", r"grounding", r"presiona", r"escribe",
+    r"web\s*cam", r"c[aá]mara", r"captura.*webcam", r"captura\s+de\s+webcam",
+    r"mira\s+(?:por\s+)?(?:la\s+)?(?:c[aá]mara|webcam|cam)"
 ]
+
 
 # v12.1.6: Resumen de Aprendizaje (KNOWLEDGE)
 _KNOWLEDGE_SUMMARY_TRIGGERS = [
