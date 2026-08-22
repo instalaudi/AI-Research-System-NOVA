@@ -576,12 +576,12 @@ export default function Home() {
                 if (statsResponse.ok) {
                     setSystemStats(await statsResponse.json());
                 }
-                setMessages(prev => [...prev, { role: "ai", text: "✅ Sistema purgado. Todos los fallos han sido eliminados de la cola de investigación." }]);
             }
         } catch (error) {
             console.error("Error clearing jobs:", error);
         }
     };
+
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
@@ -892,10 +892,11 @@ export default function Home() {
                                 <button 
                                     onClick={() => {
                                         if (confirm("¿Borrar todo el historial del chat?")) {
-                                            const initialMsg = [{ role: "ai" as const, text: "SISTEMA OPERATIVO NOVA [v12.1.5]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }];
+                                            const initialMsg = [{ role: "ai" as const, text: "SISTEMA OPERATIVO NOVA [v14.0.0 Tier S]\nEstado: LISTO PARA PROCESAMIENTO\n\n📖 CONSULTA: Pregunta sobre el conocimiento ya adquirido en el grafo.\n🔬 INVESTIGACIÓN: Escribe 'investiga [tema]' para activar la autonomía web.\n\nIngrese directiva." }];
                                             setMessages(initialMsg);
                                             localStorage.setItem("nova_chat_history", JSON.stringify(initialMsg));
                                         }
+
                                     }}
                                     className="px-3 py-1 bg-red-600/10 border border-red-500/20 rounded-full text-[9px] font-bold text-red-500 hover:bg-red-600/20 transition-all uppercase tracking-tighter"
                                 >
@@ -1810,12 +1811,13 @@ function UserDashboard({ stats, failures, onClearFailed }: { stats: any, failure
 
                     <div className="bg-[#111]/40 backdrop-blur-xl border border-white/5 rounded-[2rem] p-8">
                         <div className="flex items-center gap-3 mb-6">
-                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-[10px]">v10.1</div>
+                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-[10px]">v14.0</div>
                             <div>
                                 <h4 className="text-sm font-bold text-white tracking-tight">Industrial Core</h4>
-                                <p className="text-[10px] text-blue-400 uppercase tracking-widest">Immortal Edition</p>
+                                <p className="text-[10px] text-blue-400 uppercase tracking-widest">Tier S Edition</p>
                             </div>
                         </div>
+
                         <div className="space-y-3">
                             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/5">
                                 <CheckCircle size={14} className="text-green-500" />
