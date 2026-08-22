@@ -219,22 +219,44 @@ async def analyze_webcam(request_body: dict = None, current_user: User = Depends
         raise HTTPException(status_code=503, detail=result.get("error", "Cámara no disponible"))
     
     b64_image = result["b64"]
-    user_prompt = "Describe en detalle lo que ves en esta imagen de la cámara web del usuario."
-    if request_body and request_body.get("prompt"):
-        user_prompt = request_body["prompt"]
     
-    # 2. Enviar al modelo de visión
-    analysis = await llm_gateway.chat(
-        [{"role": "user", "content": user_prompt}],
+    # 2. Enviar al modelo de visión con prompt en inglés para máxima precisión en Moondream
+    vision_prompt = "Describe what is shown in this webcam image in detail. Identify any people, expressions, objects, text, and surroundings."
+    if request_body and request_body.get("prompt"):
+        user_req = request_body["prompt"]
+        if any(c in user_req.lower() for c in ["describe", "que", "qué", "ves", "vez"]):
+            vision_prompt = "Describe what is shown in this webcam image in detail. Identify any people, expressions, objects, text, and surroundings."
+    
+    raw_analysis = await llm_gateway.chat(
+        [{"role": "user", "content": vision_prompt}],
         lane="realtime",
         images=[b64_image],
         priority=0,
         agent_name="vision"
     )
     
+    # 3. Formatear y traducir al español de forma natural usando el modelo de lenguaje
+    final_spanish = raw_analysis.strip() if raw_analysis else "No pude analizar la imagen."
+    if raw_analysis and len(raw_analysis.strip()) > 5:
+        try:
+            translation = await llm_gateway.chat(
+                [
+                    {"role": "system", "content": "Eres el asistente de visión de NOVA. Transmite en español natural, fluido y conciso lo que se ve en la cámara web a partir del análisis visual."},
+                    {"role": "user", "content": f"Análisis visual de la cámara: '{raw_analysis}'. Descríbelo al usuario en español."}
+                ],
+                lane="fast",
+                priority=0,
+                agent_name="planner"
+            )
+            if translation and len(translation.strip()) > 5:
+                final_spanish = translation.strip()
+        except Exception:
+            pass
+
     return {
         "status": "ok",
         "image_b64": b64_image,
         "resolution": result.get("resolution", "unknown"),
-        "analysis": analysis.strip() if analysis else "No pude analizar la imagen.",
+        "analysis": final_spanish,
     }
+

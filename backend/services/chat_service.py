@@ -159,20 +159,35 @@ class ChatService:
 
                 if cap_res.get("b64"):
                     b64_img = cap_res.get("b64")
-                    v_prompt = f"El usuario pregunta: '{query}'. Analiza la imagen capturada de la {'pantalla' if is_screen else 'cámara web'} y responde en español detallando lo que ves."
-                    v_answer = await llm_gateway.chat(
+                    v_prompt = f"Describe what is shown in this {'screen' if is_screen else 'webcam'} image in detail. Identify any people, expressions, objects, text, and surroundings."
+                    raw_vision = await llm_gateway.chat(
                         [{"role": "user", "content": v_prompt}],
                         lane="realtime",
                         images=[b64_img],
                         priority=0,
                         agent_name="vision"
                     )
-                    if not v_answer:
-                        v_answer = "Capturé la imagen de la cámara web, pero el modelo de visión no generó una respuesta."
+                    v_answer = raw_vision.strip() if raw_vision else "Capturé la imagen de la cámara web, pero el modelo de visión no generó una respuesta."
+                    if raw_vision and len(raw_vision.strip()) > 5:
+                        try:
+                            translation = await llm_gateway.chat(
+                                [
+                                    {"role": "system", "content": "Eres el asistente de visión de NOVA. Transmite en español natural, fluido y conciso lo que se ve en la cámara web a partir del análisis visual."},
+                                    {"role": "user", "content": f"El usuario preguntó: '{query}'. Análisis visual: '{raw_vision}'. Respóndele en español."}
+                                ],
+                                lane="fast",
+                                priority=0,
+                                agent_name="planner"
+                            )
+                            if translation and len(translation.strip()) > 5:
+                                v_answer = translation.strip()
+                        except Exception:
+                            pass
                     
                     db.add(ChatLog(user_id=user_id, role="assistant", content=v_answer, intent="VISION"))
                     db.commit()
                     return {"query": query, "answer": v_answer, "mode": "vision", "needs_research": False}
+
                 else:
                     v_err = "No pude acceder a la cámara web en este momento. Asegúrate de que no esté siendo utilizada por otra aplicación."
                     db.add(ChatLog(user_id=user_id, role="assistant", content=v_err, intent="VISION"))
