@@ -607,9 +607,28 @@ class ChatService:
             await system_service.track_metric("cache_misses")
 
         # 4. Context build
+        _LEARNING_SUMMARY_PATTERNS = [
+            r"qu[ée]\s+.*(?:has|as|sabes|aprendiste|aprendido|nuevo|conocimiento)",
+            r"resume\s+lo\s+(que|aprendido|acumulado)",
+            r"cu[ée]ntame\s+(que|lo que)\s+(?:has|as)\s+aprendido",
+            r"qu[ée]\s+conocimiento\s+tienes",
+            r"aprendido\s+hoy",
+            r"qu[eé]\s+nuevas?\s+cosas",
+            r"que\s+hay\s+de\s+nuevo"
+        ]
+        is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
+
         knowledge_context = ""
-        if intent != "CONVERSATION":
-            knowledge_context = await memory_service.build_rag_context(intent, query, files_context, db)
+        if intent != "CONVERSATION" or is_learning_summary:
+            knowledge_context = await memory_service.build_rag_context("KNOWLEDGE" if is_learning_summary else intent, query, files_context, db)
+            if is_learning_summary:
+                try:
+                    recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
+                    if recent_entries:
+                        topics_list = "\n".join([f"- **{e.topic}** (Nivel de Confianza: {int((e.confidence_score or 0.8)*100)}%): {e.summary[:200]}..." for e in recent_entries])
+                        knowledge_context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO POR TI (NOVA):\n{topics_list}\n(Explica a Juan Ramón estos temas que tú como NOVA has aprendido e investigado recientemente)."
+                except Exception:
+                    pass
         
         # Merge profile into context
         full_context = knowledge_context + profile_context
@@ -644,40 +663,8 @@ class ChatService:
         # para reducir el tiempo de respuesta en CPU.
         # v13.9.5 FIX: Aplicar NOVA_IDENTITY_COMPACT también para CONVERSATION intent
         # para liberar tokens para historial y RAG
-        system_id = NOVA_IDENTITY_COMPACT if intent == "CONVERSATION" else NOVA_IDENTITY_PROMPT
-        
-        # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
-        _LEARNING_SUMMARY_PATTERNS = [
-            r"qu[ée]\s+.*(?:has|as|sabes|aprendiste|aprendido|nuevo|conocimiento)",
-            r"resume\s+lo\s+(que|aprendido|acumulado)",
-            r"cu[ée]ntame\s+(que|lo que)\s+(?:has|as)\s+aprendido",
-            r"qu[ée]\s+conocimiento\s+tienes",
-            r"aprendido\s+hoy",
-            r"qu[eé]\s+nuevas?\s+cosas",
-            r"que\s+hay\s+de\s+nuevo"
-        ]
-        
-        is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
-        if is_learning_summary:
-            # Para resumen de aprendizaje, usar prompt especializado
-            system_id = NOVA_LEARNING_SUMMARY_PROMPT
-            try:
-                recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
-                if recent_entries:
-                    topics_list = "\n".join([f"- **{e.topic}** (Confianza: {int((e.confidence_score or 0.8)*100)}%): {e.summary[:200]}..." for e in recent_entries])
-                    knowledge_context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO POR TI (NOVA):\n{topics_list}\n(Explica a Juan Ramón estos temas que tú como NOVA has aprendido e investigado recientemente)."
-            except Exception:
-                pass
+        system_id = NOVA_IDENTITY_COMPACT if (intent == "CONVERSATION" and not is_learning_summary) else (NOVA_LEARNING_SUMMARY_PROMPT if is_learning_summary else NOVA_IDENTITY_PROMPT)
 
-        # Re-construir user_prompt con el knowledge_context enriquecido
-        prompt_tpl = VISION_ANALYSIS_PROMPT_BODY if images else RAG_STREAM_PROMPT_BODY
-        user_prompt = prompt_tpl.format(
-            query=query, 
-            context=knowledge_context, 
-            files_context=files_context,
-            image_count=len(images or []) if images else 0,
-            current_time=current_time
-        )
 
         
         # En el carril rápido, enviamos la query cruda sin el template largo de RAG
