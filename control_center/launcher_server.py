@@ -23,7 +23,10 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 import psutil
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 import secrets
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
@@ -33,11 +36,26 @@ CONFIG_FILE  = BASE_DIR / "nova_launcher.json"
 HTML_FILE    = BASE_DIR / "control_center.html"
 
 # Load environment configuration
-load_dotenv(PROJECT_ROOT / "backend" / ".env")
-load_dotenv(PROJECT_ROOT / ".env")
+if load_dotenv:
+    load_dotenv(PROJECT_ROOT / "backend" / ".env")
+    load_dotenv(PROJECT_ROOT / ".env")
+else:
+    for env_file in [PROJECT_ROOT / "backend" / ".env", PROJECT_ROOT / ".env"]:
+        if env_file.exists():
+            try:
+                for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip('"').strip("'")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+            except Exception:
+                pass
 
 # ── Security ──────────────────────────────────────────────────────────────────
 CC_API_KEY = os.getenv("CC_API_KEY")
+
 if not CC_API_KEY or CC_API_KEY == "nova-cc-cambiar-en-produccion":
     CC_API_KEY = secrets.token_urlsafe(32)
     os.environ["CC_API_KEY"] = CC_API_KEY

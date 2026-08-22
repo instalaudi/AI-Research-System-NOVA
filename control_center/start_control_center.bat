@@ -12,24 +12,30 @@ echo   -----------------------------
 echo   Iniciando nodo de control...
 echo.
 
+:: Select Python Interpreter (prefer virtual environment)
+set "PY_EXEC=python"
+if exist "%~dp0..\backend\venv\Scripts\python.exe" (
+    set "PY_EXEC=%~dp0..\backend\venv\Scripts\python.exe"
+)
+
 :: Check Python
-python --version >nul 2>nul
+"%PY_EXEC%" --version >nul 2>nul
 if errorlevel 1 (
     color 0C
-    echo [ERROR] Python no encontrado en PATH.
+    echo [ERROR] Python no encontrado en el entorno ni en PATH.
     pause & exit /b 1
 )
 
 :: Install dependencies if needed
 echo [+] Verificando subsistemas...
-python -c "import fastapi, uvicorn, psutil, httpx" >nul 2>nul
+"%PY_EXEC%" -c "import fastapi, uvicorn, psutil, httpx" >nul 2>nul
 if errorlevel 1 (
     echo [+] Inicializando dependencias criticas...
-    pip install fastapi uvicorn[standard] psutil httpx --quiet
+    "%PY_EXEC%" -m pip install fastapi uvicorn[standard] psutil httpx python-dotenv --quiet
     if errorlevel 1 (
         color 0C
         echo [ERROR] No se pudieron instalar dependencias. Ejecuta:
-        echo        pip install fastapi uvicorn[standard] psutil httpx
+        echo        pip install fastapi uvicorn[standard] psutil httpx python-dotenv
         pause & exit /b 1
     )
 )
@@ -54,8 +60,9 @@ echo.
 start /b cmd /c "ping -n 4 127.0.0.1 >nul && start http://localhost:9999"
 
 :: Run launcher (this is the ONLY terminal window)
-python launcher_server.py
+"%PY_EXEC%" launcher_server.py
 set LAUNCHER_EXIT=%ERRORLEVEL%
+
 
 if not "%LAUNCHER_EXIT%"=="0" (
     color 0C
