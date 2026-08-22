@@ -278,10 +278,13 @@ class ChatService:
         
         # v12.1.6: Usar prompt de resumen de aprendizaje cuando el usuario pregunta qué ha aprendido
         _LEARNING_SUMMARY_PATTERNS = [
-            r"qu[ée]\s+has\s+aprendido",
+            r"qu[ée]\s+.*(?:has|as|sabes|aprendiste|aprendido|nuevo|conocimiento)",
             r"resume\s+lo\s+(que|aprendido|acumulado)",
-            r"cu[ée]ntame\s+(que|lo que)\s+has\s+aprendido",
+            r"cu[ée]ntame\s+(que|lo que)\s+(?:has|as)\s+aprendido",
             r"qu[ée]\s+conocimiento\s+tienes",
+            r"aprendido\s+hoy",
+            r"qu[eé]\s+nuevas?\s+cosas",
+            r"que\s+hay\s+de\s+nuevo"
         ]
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
@@ -291,8 +294,18 @@ class ChatService:
 
         # Omitir RAG pesado si es chat social
         context = ""
-        if intent != "CONVERSATION":
+        if intent != "CONVERSATION" or is_learning_summary:
             context = await memory_service.build_rag_context("KNOWLEDGE", query, files_context, db)
+            if is_learning_summary:
+                # Recuperar temas recientes para responder con total precisión
+                try:
+                    recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
+                    if recent_entries:
+                        topics_list = "\n".join([f"- **{e.topic}** (Confianza: {int((e.confidence_score or 0.8)*100)}%): {e.summary[:180]}..." for e in recent_entries])
+                        context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO:\n{topics_list}\n"
+                except Exception:
+                    pass
+
             
         current_time = datetime.datetime.now().strftime("%A %d de %B de %Y, %I:%M %p")
         # Localize manually 

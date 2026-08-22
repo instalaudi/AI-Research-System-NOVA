@@ -94,17 +94,19 @@ _VISION_TRIGGERS = [
 
 # v12.1.6: Resumen de Aprendizaje (KNOWLEDGE)
 _KNOWLEDGE_SUMMARY_TRIGGERS = [
-    r"(?:qué|que)\s+(?:has\s+aprendido|conocimiento\s+tienes|sabes\s+hasta\s+ahora)",
+    r"(?:qué|que)\s+.*(?:has|as|sabes|aprendiste|aprendido|conocimiento)",
     r"resume\s+(?:lo\s+que\s+has\s+aprendido|tu\s+aprendizaje|lo\s+aprendido)",
     r"(?:cu[eé]ntame|dime)\s+(?:lo\s+)?(?:que|qu[eé])\s+(?:has\s+aprendido|sabes)",
     r"haz\s+(?:un|una)\s+resumen\s+de\s+(?:lo\s+aprendido|tu\s+conocimiento)",
+    r"aprendido\s+hoy", r"qu[eé]\s+nuevas?\s+cosas", r"que\s+hay\s+de\s+nuevo"
 ]
 
 _STATUS_TRIGGERS = [
-    r"qu[ée]\s+has\s+aprendido", r"resume\s+lo\s+que\s+has\s+aprendido",
+    r"qu[ée]\s+.*(?:has|as)\s+aprendido", r"resume\s+lo\s+que\s+has\s+aprendido",
     r"qu[ée]\s+sabes\s+de\s+esta\s+sesi[oó]n", r"qu[ée]\s+recuerdas",
     r"resumen\s+de\s+lo\s+aprendido", r"dime\s+qu[ée]\s+has\s+hecho"
 ]
+
 
 
 async def classify_intent(query: str) -> str:

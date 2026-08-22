@@ -186,15 +186,19 @@ class MemoryService:
             # Invertir para obtener orden cronológico (más antiguo primero)
             recent_logs = list(reversed(recent_logs))
             
-            # Convertir a formato de messages
+            # Convertir a formato de messages (filtrando avisos de sistema de segundo plano)
             history = []
             for log in recent_logs:
+                # Evitar que mensajes de sistema de construcción o purgas contaminen el hilo conversacional
+                if log.role == "assistant" and any(p in log.content for p in ["paquete ZIP", "construcción y auditoría de tu proyecto en segundo plano"]):
+                    continue
                 history.append({
                     "role": log.role,
                     "content": log.content
                 })
             
             return history
+
         except Exception as e:
             logger.error(f"Error recuperando historial de chat: {e}")
             return []
