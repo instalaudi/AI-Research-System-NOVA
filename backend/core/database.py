@@ -269,7 +269,26 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def _auto_migrate_columns():
+    """
+    v14.0: Migración automática de columnas para SQLite.
+    Verifica y añade columnas faltantes en tablas existentes sin requerir Alembic.
+    """
+    try:
+        with engine.connect() as conn:
+            # 1. Comprobar columna 'intent' en 'chat_logs'
+            table_info = conn.exec_driver_sql("PRAGMA table_info(chat_logs);").fetchall()
+            existing_cols = {row[1] for row in table_info}
+            if existing_cols and "intent" not in existing_cols:
+                conn.exec_driver_sql("ALTER TABLE chat_logs ADD COLUMN intent TEXT;")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_chatlog_intent ON chat_logs (intent);")
+                conn.commit()
+                print("[DB] Migración automática: columna 'intent' agregada a chat_logs")
+    except Exception as e:
+        print(f"[DB] Error en auto-migración de columnas: {e}")
+
 def perform_database_maintenance():
+
     """
     v14.0: Mantenimiento proactivo de SQLite.
     Ejecuta optimización de índices y balanceo de páginas de almacenamiento.
@@ -283,7 +302,10 @@ def perform_database_maintenance():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _auto_migrate_columns()
     perform_database_maintenance()
+
+
 
 def get_db():
     db = SessionLocal()
