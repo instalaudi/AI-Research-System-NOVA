@@ -1445,9 +1445,10 @@ function GenerativeChart({ dataStr }: { dataStr: string }) {
                     {isBar ? <BarChartIcon size={16} className="text-blue-400" /> : <TrendingUp size={16} className="text-indigo-400" />}
                     <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400">{config.title || "Visualización de Datos"}</h4>
                 </div>
-                <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className="h-64 w-full min-w-0">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                         <ChartComponent data={sanitizedData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+
                             <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
                             <XAxis 
                                 dataKey="name" 

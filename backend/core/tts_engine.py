@@ -510,35 +510,45 @@ class NOVAVoiceEngine:
     #  SÍNTESIS EN FRAGMENTOS (streaming)
     # ══════════════════════════════════════════════════════════
 
-    async def synthesize_streaming(self, text: str, speed: Optional[float] = None):
-        """
-        Genera audio por fragmentos para respuestas largas.
-        Divide por oraciones para empezar a reproducir antes
-        de que termine la síntesis completa.
-        """
-        sentences = self._split_sentences(text)
-        for sentence in sentences:
-            if not sentence.strip():
+    @staticmethod
+    def _segment_text_for_streaming(text: str) -> list:
+        """Segmenta el texto en cláusulas fonéticas para emisión de audio en streaming ultra-rápida."""
+        import re
+        clean = text.strip()
+        if not clean:
+            return []
+        sentences = re.split(r'(?<=[.!?\n])\s+', clean)
+        clauses = []
+        for s in sentences:
+            s = s.strip()
+            if not s:
                 continue
-            audio = await self.synthesize(sentence.strip(), speed=speed)
-            if audio:
-                yield audio
+            if len(s) > 120 and ("," in s or ";" in s or ":" in s):
+                sub_parts = re.split(r'(?<=[,;:])\s+', s)
+                clauses.extend([p.strip() for p in sub_parts if p.strip()])
+            else:
+                clauses.append(s)
+        return clauses or [clean]
+
+    async def synthesize_stream(self, text: str, speed: Optional[float] = None):
+        """Generador asíncrono que emite fragmentos de audio a medida que se sintetizan."""
+        clauses = self._segment_text_for_streaming(text)
+        for clause in clauses:
+            if not clause.strip():
+                continue
+            chunk = await self.synthesize(clause, speed=speed)
+            if chunk:
+                yield chunk
+
+    async def synthesize_streaming(self, text: str, speed: Optional[float] = None):
+        """Alias retrocompatible para synthesize_stream."""
+        async for chunk in self.synthesize_stream(text, speed=speed):
+            yield chunk
 
     def _split_sentences(self, text: str) -> list:
         """Divide texto en oraciones para síntesis parcial."""
-        import re
-        # Dividir por punto, signo de exclamación, pregunta
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        # Agrupar oraciones cortas para no generar demasiados fragmentos
-        result, current = [], ""
-        for s in sentences:
-            current += " " + s
-            if len(current) > 150:
-                result.append(current.strip())
-                current = ""
-        if current.strip():
-            result.append(current.strip())
-        return result
+        return self._segment_text_for_streaming(text)
+
 
     # ══════════════════════════════════════════════════════════
     #  LIMPIEZA DE TEXTO

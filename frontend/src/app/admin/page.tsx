@@ -272,8 +272,8 @@ export default function AdminPage() {
                     <span className="flex items-center gap-1.5 text-blue-400"><div className="w-2 h-2 rounded-full bg-blue-500" /> RAM</span>
                   </div>
                 </div>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-[300px] w-full min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250}>
                     <AreaChart data={history}>
                       <defs>
                         <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
@@ -300,8 +300,8 @@ export default function AdminPage() {
                 <h3 className="text-lg font-bold flex items-center gap-3 mb-8">
                   <Clock className="text-amber-500" size={20} /> Rendimiento de Tareas
                 </h3>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-[300px] w-full min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250}>
                     <BarChart data={[
                       { name: 'Activas', val: stats?.active_jobs || 0 },
                       { name: 'Completadas', val: stats?.completed_jobs || 0 }
@@ -317,6 +317,7 @@ export default function AdminPage() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+
               </div>
             </div>
           </div>

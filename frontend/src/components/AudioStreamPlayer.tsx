@@ -42,33 +42,55 @@ export default function AudioStreamPlayer({
         try {
             abortControllerRef.current = new AbortController();
             
-            const response = await apiFetch("/tts/stream", {
+            let response = await apiFetch("/tts/stream", {
                 method: "POST",
                 json: { text: textToSpeak, speed: 1.0 },
                 signal: abortControllerRef.current.signal,
             });
 
+            if (!response.ok) {
+                // Fallback a endpoint estándar si streaming falla
+                response = await apiFetch("/tts", {
+                    method: "POST",
+                    json: { text: textToSpeak, speed: 1.0 },
+                    signal: abortControllerRef.current.signal,
+                });
+            }
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            const blob = await response.blob();
+            const arrayBuffer = await response.arrayBuffer();
+            if (!arrayBuffer || arrayBuffer.byteLength < 44) {
+                // Buffer vacío o menor al header mínimo WAV
+                console.warn("[AudioStreamPlayer] Audio buffer recibido está vacío.");
+                return;
+            }
+
+            const blob = new Blob([arrayBuffer], { type: "audio/wav" });
             const blobUrl = URL.createObjectURL(blob);
 
             if (audioRef.current) {
                 audioRef.current.src = blobUrl;
                 audioRef.current.muted = isMuted;
-                await audioRef.current.play();
-                setIsPlaying(true);
+                try {
+                    await audioRef.current.play();
+                    setIsPlaying(true);
+                } catch (playErr: any) {
+                    if (playErr.name !== "AbortError") {
+                        console.warn("[AudioStreamPlayer] Playback no pudo iniciar:", playErr.message);
+                    }
+                }
             }
         } catch (err: any) {
             if (err.name !== "AbortError") {
-                console.error("[AudioStreamPlayer] Error streaming audio:", err);
+                console.warn("[AudioStreamPlayer] Error streaming audio:", err.message || err);
             }
         } finally {
             setIsLoading(false);
         }
+
     };
 
     const stopPlayback = () => {
