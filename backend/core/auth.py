@@ -1,10 +1,11 @@
 import datetime
 from typing import Optional
-import jwt
-import bcrypt
+import jwt  # type: ignore
+import bcrypt  # type: ignore
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session  # type: ignore
+
 from core.database import get_db, User
 import os
 
