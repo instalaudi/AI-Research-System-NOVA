@@ -32,6 +32,10 @@ openai-whisper
 ffmpeg-python
 opencv-python
 pillow
+edge-tts
+kokoro-onnx
+soundfile
+
 
 # Documents & Parsing
 pymupdf

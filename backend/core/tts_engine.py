@@ -129,21 +129,20 @@ class NOVAVoiceEngine:
 
     async def initialize(self, voice_name: Optional[str] = None) -> bool:
         """Inicializa el motor de voz de NOVA, priorizando Kokoro."""
-        if self._ready:
+        voice = voice_name or self._model_name
+        if self._ready and self._model_name == voice and self.engine is not None:
             return True
         if self._loading:
             # Esperar si ya está cargando
             for _ in range(30):
                 await asyncio.sleep(1)
-                if self._ready:
+                if self._ready and self._model_name == voice:
                     return True
             return False
 
         self._loading = True
         
         try:
-            voice = voice_name or self._model_name
-            
             # 1. Si es voz de Kokoro, inicializar Kokoro
             kokoro_prefixes = ("af_", "am_", "bf_", "bm_", "ef_", "em_", "ff_", "if_", "im_", "jf_", "jm_", "pf_", "pm_", "zf_", "zm_")
             if voice.startswith(kokoro_prefixes):
@@ -161,6 +160,7 @@ class NOVAVoiceEngine:
                 self._ready = True
                 print(f"[TTS] Voz Edge-TTS '{voice}' lista")
                 return True
+
 
             # 3. Fallback a Piper (anterior)
             print(f"[TTS] Cargando voz de NOVA: {voice}...")
@@ -331,6 +331,10 @@ class NOVAVoiceEngine:
         if self._use_cache and cache_file.exists():
             return cache_file.read_bytes()
 
+        # Asegurar que el motor correspondiente esté cargado y listo
+        if not self._ready or self.engine is None:
+            await self.initialize(self._model_name)
+
         # 1. Usar Kokoro si está disponible (Procesamiento en Proceso Separado)
         if self.engine == "kokoro":
             try:
@@ -341,11 +345,13 @@ class NOVAVoiceEngine:
                 )
                 if audio_bytes and self._use_cache:
                     cache_file.write_bytes(audio_bytes)
-                return audio_bytes
+                if audio_bytes:
+                    return audio_bytes
             except Exception as e:
                 logger.error(f"[TTS] Error en executor de Kokoro: {e}")
                 # Fallback a Piper si el proceso falla
                 self.engine = "piper"
+
 
 
         # 2. Verificar si es una voz Neural (Edge TTS)
@@ -657,11 +663,12 @@ class NOVAVoiceEngine:
         # Pre-detectar el motor para que initialize() lo recoja
         kokoro_prefixes = ("af_", "am_", "bf_", "bm_", "ef_", "em_", "ff_", "if_", "im_", "jf_", "jm_", "pf_", "pm_", "zf_", "zm_")
         if voice_name.startswith(kokoro_prefixes):
-            self.engine = None  # Se asignará en initialize()
+            self.engine = "kokoro"
         elif voice_name.endswith("Neural"):
-            self.engine = None
+            self.engine = "edge-tts"
         else:
-            self.engine = None
+            self.engine = "piper"
+
 
         print(f"[TTS] Voz cambiada a: {voice_name} (motor anterior: {old_engine}) - se cargará en la próxima síntesis")
 

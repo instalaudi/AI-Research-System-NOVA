@@ -247,6 +247,8 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("[!] Módulo core/vision_monitor.py no disponible. Continuando sin monitor de visión.")
     
+    tts_init_task = asyncio.create_task(nova_voice.initialize())
+
     try:
         yield
     except asyncio.CancelledError:
@@ -256,8 +258,9 @@ async def lifespan(app: FastAPI):
         bg_tasks = [
             health_task, evolution_task, distillation_task,
             polling_task, proactive_task, warmup_task, recovery_task,
-            reboot_task, vision_task  # v13.8.18: Incluir Vision Monitor en shutdown
+            reboot_task, vision_task, tts_init_task
         ]
+
         bg_tasks = [t for t in bg_tasks if t is not None]
         # C1: Detener vision monitor y liberar cámara antes de cancelar la tarea
         try:
