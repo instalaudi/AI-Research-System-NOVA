@@ -1,8 +1,9 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, File, UploadFile
 from fastapi.responses import StreamingResponse, Response, FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session  # type: ignore
 import base64
+
 
 from core.database import User, SessionLocal, get_db
 from core.auth import get_current_user, get_current_admin
