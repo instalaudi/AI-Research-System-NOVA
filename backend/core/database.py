@@ -1,6 +1,7 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, Boolean, Index, event
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, Boolean, Index, event  # type: ignore
+from sqlalchemy.orm import sessionmaker, DeclarativeBase  # type: ignore
+
 import datetime
 
 def utc_now():
