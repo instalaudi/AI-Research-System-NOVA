@@ -286,10 +286,16 @@ class ChatService:
         ]
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
+        
+        # v14.0.1: Contexto conversacional para respuestas afirmativas cortas ("si", "dale", "claro")
+        if not is_learning_summary and query.strip().lower() in ["si", "sí", "dale", "muestrame", "muéstrame", "adelante", "claro", "por favor", "ok"]:
+            last_msg = db.query(ChatLog).filter(ChatLog.user_id == user_id, ChatLog.role == "assistant").order_by(ChatLog.created_at.desc()).first()
+            if last_msg and any(w in (last_msg.content or "").lower() for w in ["base de datos", "qué ha aprendido", "aprendido hoy", "notificación automática", "mostrar lo que encontré"]):
+                is_learning_summary = True
+
         if is_learning_summary:
             # Para resumen de aprendizaje, usar prompt especializado
             system_id = NOVA_LEARNING_SUMMARY_PROMPT
-
 
         # Omitir RAG pesado si es chat social
         context = ""
@@ -301,9 +307,10 @@ class ChatService:
                     recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
                     if recent_entries:
                         topics_list = "\n".join([f"- **{e.topic}** (Confianza: {int((e.confidence_score or 0.8)*100)}%): {e.summary[:180]}..." for e in recent_entries])
-                        context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO:\n{topics_list}\n"
+                        context += f"\n\n### INVESTIGACIONES Y CONOCIMIENTO RECIENTE APRENDIDO POR TI (NOVA):\n{topics_list}\n"
                 except Exception:
                     pass
+
 
             
         current_time = datetime.datetime.now().strftime("%A %d de %B de %Y, %I:%M %p")
@@ -617,6 +624,12 @@ class ChatService:
             r"que\s+hay\s+de\s+nuevo"
         ]
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
+        
+        # v14.0.1: Contexto conversacional para respuestas afirmativas cortas ("si", "dale", "claro")
+        if not is_learning_summary and query.strip().lower() in ["si", "sí", "dale", "muestrame", "muéstrame", "adelante", "claro", "por favor", "ok"]:
+            last_msg = db.query(ChatLog).filter(ChatLog.user_id == user_id, ChatLog.role == "assistant").order_by(ChatLog.created_at.desc()).first()
+            if last_msg and any(w in (last_msg.content or "").lower() for w in ["base de datos", "qué ha aprendido", "aprendido hoy", "notificación automática", "mostrar lo que encontré"]):
+                is_learning_summary = True
 
         knowledge_context = ""
         if intent != "CONVERSATION" or is_learning_summary:
@@ -647,14 +660,16 @@ class ChatService:
         # FIX CRÍTICO: Construir user_prompt SIN duplicar NOVA_IDENTITY_PROMPT.
         # FIX CRÍTICO: Usar _BODY (sin identidad) porque NOVA_IDENTITY_PROMPT
         # ya se envía 1 sola vez como system role abajo.
+        display_query = "Resume las investigaciones científicas y conocimientos que tú (NOVA) has aprendido recientemente en tu base de datos." if is_learning_summary else query
         prompt_tpl = VISION_ANALYSIS_PROMPT_BODY if images else RAG_STREAM_PROMPT_BODY
         user_prompt = prompt_tpl.format(
-            query=query, 
+            query=display_query, 
             context=knowledge_context, 
             files_context=files_context,
             image_count=len(images or []) if images else 0,
             current_time=current_time
         )
+
 
         full_response = ""  # Inicializado correctamente antes de cualquier lgica pesada
         full_response_prefix = "[VISTO POR NOVA 👁️] " if images else ""
