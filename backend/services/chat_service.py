@@ -23,11 +23,9 @@ from core.prompts import (
     VISION_ANALYSIS_PROMPT_BODY,     # FIX: sin identidad duplicada para stream
     NOVA_IDENTITY_PROMPT,
     NOVA_IDENTITY_COMPACT,
-    # HOTFIX v13.9.1: NOVA_SOCIAL_PROMPT y NOVA_LEARNING_SUMMARY_PROMPT no existen
-    # Se usará NOVA_IDENTITY_PROMPT como fallback
-    # NOVA_SOCIAL_PROMPT,
-    # NOVA_LEARNING_SUMMARY_PROMPT,    # v12.1.6: Prompt especializado
+    NOVA_LEARNING_SUMMARY_PROMPT,
 )
+
 from core.logging_config import get_logger, request_id_var
 from services.memory_service import memory_service
 from services.system_service import system_service
@@ -289,8 +287,9 @@ class ChatService:
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
         if is_learning_summary:
-            # Para resumen de aprendizaje, usar prompt completo
-            system_id = NOVA_IDENTITY_PROMPT
+            # Para resumen de aprendizaje, usar prompt especializado
+            system_id = NOVA_LEARNING_SUMMARY_PROMPT
+
 
         # Omitir RAG pesado si es chat social
         context = ""
@@ -660,8 +659,8 @@ class ChatService:
         
         is_learning_summary = any(re.search(pat, query, re.I) for pat in _LEARNING_SUMMARY_PATTERNS)
         if is_learning_summary:
-            # Para resumen de aprendizaje, usar prompt completo para garantizar coherencia
-            system_id = NOVA_IDENTITY_PROMPT
+            # Para resumen de aprendizaje, usar prompt especializado
+            system_id = NOVA_LEARNING_SUMMARY_PROMPT
             try:
                 recent_entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc()).limit(5).all()
                 if recent_entries:
@@ -685,11 +684,12 @@ class ChatService:
         # para ahorrar otros ~200 tokens de prefill.
         # v13.8.16: Incluir contexto de archivos incluso en charla social
         final_user_content = query
-        if intent == "CONVERSATION":
+        if intent == "CONVERSATION" and not is_learning_summary:
             if files_context:
                 final_user_content = f"{files_context}\n\nMENSAJE DEL USUARIO: {query}"
         else:
             final_user_content = user_prompt
+
 
         # v11.9.22: Skill Injection en Stream (Universal)
         active_skills = ["terminal_skill", "browser_navigation_skill"]
