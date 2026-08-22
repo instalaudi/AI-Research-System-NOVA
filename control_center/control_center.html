@@ -138,6 +138,34 @@ body::before {
   border-radius: 3px;
 }
 
+.quick-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.quick-link-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-head);
+  font-size: 8.5px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-mid);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: all .2s;
+}
+.quick-link-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(0, 212, 255, 0.08);
+}
+
+
 /* ── SIDEBAR ──────────────────────────────────────────────────────────── */
 .sidebar {
   background: var(--bg-base);
@@ -738,7 +766,14 @@ body::before {
       <strong id="ram-val">—</strong>
     </div>
 
+    <div class="quick-links ml-16">
+      <a href="http://localhost:3000" target="_blank" rel="noreferrer" class="quick-link-btn">💬 Chat App</a>
+      <a href="http://localhost:3000/admin" target="_blank" rel="noreferrer" class="quick-link-btn">🛡️ Admin Panel</a>
+      <a href="http://localhost:8000/docs" target="_blank" rel="noreferrer" class="quick-link-btn">📚 API Docs</a>
+    </div>
+
     <div class="version-badge ml-16">v14.0.0 Tier S</div>
+
 
   </header>
 

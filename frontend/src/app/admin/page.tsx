@@ -224,8 +224,9 @@ export default function AdminPage() {
               <h1 className="text-4xl font-black tracking-tight text-white flex items-center gap-2">
                 NOVA <span className="text-blue-500 text-sm font-mono tracking-widest bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">CORE ADMIN</span>
               </h1>
-              <p className="text-gray-500 text-sm font-medium mt-1">Soberanía de Inteligencia Artificial • Dashboard v10.7.6</p>
+              <p className="text-gray-500 text-sm font-medium mt-1">Soberanía de Inteligencia Artificial • Dashboard v14.0.0 Tier S</p>
             </div>
+
           </div>
           
           <div className="flex items-center gap-3 bg-[#111] p-1.5 rounded-2xl border border-gray-800">
