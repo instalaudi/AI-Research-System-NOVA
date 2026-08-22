@@ -69,8 +69,13 @@ class LLMRouter:
             async with self._lock:
                 self._active_high_priority += 1
 
+        if client.name == "Vision":
+            model_override = kwargs.get("model", "")
+            if not any(v in model_override.lower() for v in ["moondream", "llava", "vision", "minicpm", "bakllava"]):
+                kwargs["model"] = LLM_VISION_MODEL
+
         try:
-            print(f"[Router] Routing request for '{agent_name}' to engine: {client.name} (Port: {client.base_url})")
+            print(f"[Router] Routing request for '{agent_name}' to engine: {client.name} (Port: {client.base_url}, Model: {kwargs.get('model', client.default_model)})")
             return await client.chat(messages, **kwargs)
         finally:
             if is_high_prio:
@@ -84,9 +89,15 @@ class LLMRouter:
         has_images = bool(kwargs.get("images"))
         client = self.get_client_for_agent(agent_name, has_images=has_images)
         
+        if client.name == "Vision":
+            model_override = kwargs.get("model", "")
+            if not any(v in model_override.lower() for v in ["moondream", "llava", "vision", "minicpm", "bakllava"]):
+                kwargs["model"] = LLM_VISION_MODEL
+
         # El streaming suele ser Chat (Prioridad Máxima)
         async with self._lock:
             self._active_high_priority += 1
+
         try:
             print(f"[Router] Routing stream for '{agent_name}' to engine: {client.name}")
             async for chunk in client.chat_stream(messages, **kwargs):

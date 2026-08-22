@@ -64,7 +64,8 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11438/api/chat")
 LLM_DEV_URL = os.getenv("LLM_DEV_URL", "http://localhost:11439/api/chat")
 LLM_AUDIT_URL = os.getenv("LLM_AUDIT_URL", "http://localhost:11440/api/chat")
 LLM_AUDIT_MODEL = os.getenv("LLM_AUDIT_MODEL", "phi3:mini")
-LLM_VISION_MODEL = os.getenv("LLM_VISION_MODEL", "llava-llama3:latest")
+LLM_VISION_MODEL = os.getenv("LLM_VISION_MODEL", "moondream:latest")
+
 
 OLLAMA_NUM_THREAD   = int(os.getenv("OLLAMA_NUM_THREAD",   "6")) # v11.9.0: Reducido a 6 para reservar 2 cores para backend Python + OS (Ryzen 7 5700G 8C/16T)
 

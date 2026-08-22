@@ -12,11 +12,13 @@ from core.config import (
     LLM_GATEWAY_BATCH_MODEL,
     LLM_GATEWAY_BATCH_TIMEOUT_SECONDS,
     LLM_GATEWAY_REALTIME_MODEL,
+    LLM_VISION_MODEL,
     LLM_REALTIME_MAX_CONCURRENCY,
     OLLAMA_NUM_CTX,
     OLLAMA_NUM_PREDICT,
     OLLAMA_NUM_THREAD,
 )
+
 from core.llm_client import CircuitBreaker
 from core.llm_router import llm_router
 
@@ -76,6 +78,9 @@ class LLMGateway:
         agent_name: str = "default",
     ) -> str:
         lane_name = (lane or "realtime").lower()
+        has_images = bool(images)
+        is_vision = has_images or (agent_name and "vision" in str(agent_name).lower())
+
         if lane_name == "batch":
             self._record_attempt("batch")
             # v13.8.16 audit: Circuit Breaker restaurado
@@ -85,7 +90,7 @@ class LLMGateway:
             # Concurrency managed by LLMClient PrioritySemaphore
             started = time.time()
             self._record_request("batch")
-            model_to_use = model or LLM_GATEWAY_BATCH_MODEL
+            model_to_use = model or (LLM_VISION_MODEL if is_vision else LLM_GATEWAY_BATCH_MODEL)
             # v13.8.16 audit: Siempre usamos el router local para mayor control y fallback offline
             try:
                 result = await llm_router.chat(
@@ -115,7 +120,7 @@ class LLMGateway:
         
         started = time.time()
         self._record_request("realtime")
-        model_to_use = model or LLM_GATEWAY_REALTIME_MODEL
+        model_to_use = model or (LLM_VISION_MODEL if is_vision else LLM_GATEWAY_REALTIME_MODEL)
         try:
             result = await llm_router.chat(
                 messages=messages,
@@ -128,6 +133,7 @@ class LLMGateway:
                 max_retries=3,
                 agent_name=agent_name
             )
+
             self._realtime_breaker.record_success()
             self._record_success("realtime", (time.time() - started) * 1000)
             return result
