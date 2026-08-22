@@ -35,7 +35,7 @@ from core.task_queue import task_queue
 from core.cache import smart_cache
 from core.guard import prompt_guard
 from core.intent_classifier import classify_intent
-from core.database import SessionLocal, UserProfile, Feedback, ChatLog, ApprovalRequest
+from core.database import SessionLocal, UserProfile, Feedback, ChatLog, ApprovalRequest, KnowledgeEntry
 from core.project_manager import project_manager
 from core.config import ENABLE_AUTO_GIT_VERSIONING
 from core.git_versioning import git_versioning
