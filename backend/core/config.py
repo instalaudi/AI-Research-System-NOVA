@@ -7,12 +7,21 @@ if not os.getenv("HF_TOKEN"):
     os.environ["HF_TOKEN"] = "hf_dummy_token_to_silence_warnings"
 
 # Load .env file
+from pathlib import Path
 from dotenv import load_dotenv  # type: ignore
+
+_backend_env = Path(__file__).resolve().parent.parent / ".env"
+_root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+if _backend_env.exists():
+    load_dotenv(dotenv_path=_backend_env)
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
 load_dotenv()
 
 # System Version
-VERSION = "13.9.0"
-SYSTEM_VERSION = VERSION  # v13.9.0: AUTONOMOUS VISION & NEURAL VOICE — OpenCV + Kokoro-82M + Swarm Dev
+VERSION = "14.0.0 Tier S"
+SYSTEM_VERSION = VERSION
+
 
 # ── Path Configuration (Absolute to Backend) ─────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

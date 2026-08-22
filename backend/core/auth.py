@@ -9,16 +9,18 @@ from core.database import get_db, User
 import os
 
 # Password hashing configuration
-# v8.1: Using bcrypt directly to avoid passlib/bcrypt version detection bugs
-# FIX-C2: JWT secret MUST be set via environment variable — no insecure defaults
+from core.config import BASE_DIR
+import secrets
+
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
-    raise RuntimeError(
-        "FATAL: JWT_SECRET_KEY environment variable is required. "
-        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\" "
-        "and add it to your .env file."
-    )
+    # Auto-generate a secure token and set it in runtime if missing
+    SECRET_KEY = secrets.token_hex(32)
+    os.environ["JWT_SECRET_KEY"] = SECRET_KEY
+    print("[AUTH] JWT_SECRET_KEY generado dinámicamente para la sesión.")
+
 ALGORITHM = "HS256"
+
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 hours
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
