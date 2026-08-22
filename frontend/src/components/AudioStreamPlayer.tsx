@@ -42,11 +42,12 @@ export default function AudioStreamPlayer({
         try {
             abortControllerRef.current = new AbortController();
             
-            const response = await apiFetch("/chat/tts/stream", {
+            const response = await apiFetch("/tts/stream", {
                 method: "POST",
                 json: { text: textToSpeak, speed: 1.0 },
                 signal: abortControllerRef.current.signal,
             });
+
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);

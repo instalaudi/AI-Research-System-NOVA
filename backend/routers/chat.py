@@ -145,7 +145,9 @@ async def text_to_speech(request: Request, current_user: User = Depends(get_curr
     )
 
 @router.post("/tts/stream")
+@router.post("/chat/tts/stream")
 async def stream_text_to_speech(request: Request, current_user: User = Depends(get_current_user)):
+
     """
     v14.0: Emite fragmentos de audio en streaming mediante StreamingResponse.
     Permite al frontend reproducir audio a medida que se sintetiza con Time-to-First-Audio < 300ms.
